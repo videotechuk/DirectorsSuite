@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="common.cpp" />
+    <ClCompile Include="keyboard.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="script.cpp" />
+    <ClCompile Include="UI\Drawing.cpp" />
+    <ClCompile Include="UI\Menu.cpp" />
+    <ClCompile Include="UI\UIUtil.cpp" />
+    <ClCompile Include="Editor\Config.cpp" />
+    <ClCompile Include="Editor\CameraManager.cpp" />
+    <ClCompile Include="Editor\CameraDirector.cpp" />
+    <ClCompile Include="Editor\FreeCam.cpp" />
+    <ClCompile Include="Editor\WorldControl.cpp" />
+    <ClCompile Include="Editor\Overlays.cpp" />
+    <ClCompile Include="Editor\Aiming.cpp" />
+    <ClCompile Include="Editor\Gameplay.cpp" />
+    <ClCompile Include="Editor\OBSClient.cpp" />
+    <ClCompile Include="Submenus\EditorMenus.cpp" />
+    <ClCompile Include="Submenus\DirectorMenus.cpp" />
+    <ClCompile Include="Editor\DirectorMode.cpp" />
+    <ClCompile Include="Editor\HeroLight.cpp" />
+    <ClCompile Include="Editor\PhotoMode.cpp" />
+    <ClCompile Include="Editor\PhotoModeUI.cpp" />
+    <ClCompile Include="Editor\ScenePhotoMenus.cpp" />
+    <ClCompile Include="Editor\SceneEditor.cpp" />
+    <ClCompile Include="Editor\SceneData.cpp" />
+    <ClCompile Include="Editor\ScreenCapture.cpp" />
+    <ClCompile Include="Editor\TimecycleRT.cpp" />
+    <ClCompile Include="Editor\PhotoAudio.cpp" />
+    <ClCompile Include="Editor\BlackBarsPatch.cpp" />
+    <ClCompile Include="Editor\HandheldMotion.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\inc\main.h" />
+    <ClInclude Include="..\..\inc\enums.h" />
+    <ClInclude Include="..\..\inc\natives.h" />
+    <ClInclude Include="..\..\inc\types.h" />
+    <ClInclude Include="..\..\inc\nativeCaller.h" />
+    <ClInclude Include="common.hpp" />
+    <ClInclude Include="console.h" />
+    <ClInclude Include="keyboard.h" />
+    <ClInclude Include="script.h" />
+    <ClInclude Include="UI\Drawing.h" />
+    <ClInclude Include="UI\Menu.hpp" />
+    <ClInclude Include="UI\Submenu.hpp" />
+    <ClInclude Include="UI\SubmenuIDs.h" />
+    <ClInclude Include="UI\UIUtil.h" />
+    <ClInclude Include="UI\Options\BoolOption.h" />
+    <ClInclude Include="UI\Options\EmptyOption.h" />
+    <ClInclude Include="UI\Options\Option.h" />
+    <ClInclude Include="UI\Options\RegularOption.h" />
+    <ClInclude Include="UI\Options\SubmenuOption.h" />
+    <ClInclude Include="UI\Options\VectorOption.h" />
+    <ClInclude Include="Editor\EditorTypes.h" />
+    <ClInclude Include="Editor\EditorMath.h" />
+    <ClInclude Include="Editor\Config.h" />
+    <ClInclude Include="Editor\CameraManager.h" />
+    <ClInclude Include="Editor\CameraDirector.h" />
+    <ClInclude Include="Editor\FreeCam.h" />
+    <ClInclude Include="Editor\WorldControl.h" />
+    <ClInclude Include="Editor\Overlays.h" />
+    <ClInclude Include="Editor\Aiming.h" />
+    <ClInclude Include="Editor\Gameplay.h" />
+    <ClInclude Include="Editor\OBSClient.h" />
+    <ClInclude Include="Submenus\SubmenuInclude.h" />
+    <ClInclude Include="Submenus\EditorMenus.h" />
+    <ClInclude Include="Editor\DirectorTypes.h" />
+    <ClInclude Include="Editor\DirectorMode.h" />
+    <ClInclude Include="Editor\HeroLight.h" />
+    <ClInclude Include="Editor\PhotoMode.h" />
+    <ClInclude Include="Editor\SceneEditor.h" />
+    <ClInclude Include="Editor\SceneData.h" />
+    <ClInclude Include="Editor\SceneSteppers.h" />
+    <ClInclude Include="Editor\Data\SceneObjectsData.h" />
+    <ClInclude Include="Editor\Data\ScenePedsData.h" />
+    <ClInclude Include="Editor\Data\SceneScenariosData.h" />
+    <ClInclude Include="Editor\ScreenCapture.h" />
+    <ClInclude Include="Editor\TimecycleRT.h" />
+    <ClInclude Include="Editor\PhotoAudio.h" />
+    <ClInclude Include="Editor\BlackBarsPatch.h" />
+    <ClInclude Include="Editor\HandheldMotion.h" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{3E2B6F8C-9A41-4D27-B5E0-7C12A9D4F6B3}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>DirectorsSuite</RootNamespace>
+    <ProjectName>DirectorsSuite</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <TargetExt>.asi</TargetExt>
+    <OutDir>$(SolutionDir)bin\</OutDir>
+    <IntDir>tmp\$(Configuration)\</IntDir>
+    <TargetName>DirectorsSuite</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <DebugInformationFormat>None</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalOptions>..\..\lib\ScriptHookRDR2.lib ws2_32.lib bcrypt.lib gdiplus.lib %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+    <PostBuildEvent>
+      <Command>
+      </Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

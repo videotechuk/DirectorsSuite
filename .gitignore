@@ -1,0 +1,27 @@
+# Build output
+src/bin/
+src/DirectorsSuite/tmp/
+src/DirectorsSuite/bin/
+*.asi
+*.obj
+*.pdb
+*.ipdb
+*.iobj
+*.exp
+*.ilk
+*.tlog
+*.recipe
+*.lastbuildstate
+*.idb
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+
+# Local tooling / editor config (machine-specific)
+.claude/
+
+# OS
+Thumbs.db
+desktop.ini
