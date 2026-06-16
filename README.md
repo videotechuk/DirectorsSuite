@@ -52,7 +52,13 @@ camera · **C** (hold while aiming) aim assist · **H** hide UI for a clean shot
 
 ## Credits
 
-videotech (creator) · Alexander Blade (ScriptHookRDR2 SDK) · Disquse & Cfx.re (timecycle
-editor) · Halen84 (script research & native menu base) · kepmehz (script research) ·
-femga (game research) · TheNathanNS (QA) · WesternSpace (ultra-wide black-bars patch) ·
-Claude (research, code, bug fixes).
+videotech (creator) 
+· Alexander Blade (ScriptHookRDR2 SDK) 
+· Disquse & Cfx.re (timecycle
+editor) 
+· Halen84 (script research & native menu base) 
+· kepmehz (script research) 
+·femga (game research) 
+· TheNathanNS (QA) 
+· WesternSpace (ultra-wide black-bars patch) 
+· Claude (research, code, bug fixes).
