@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <cmath>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -18,9 +19,11 @@ namespace
 	std::atomic<bool> s_busy{ false };
 	std::atomic<bool> s_done{ false };
 	std::atomic<int>  s_result{ ScreenCapture::CAP_FAILED };
+	std::atomic<float> s_cropAspect{ 0.0f }; // target W:H for the saved file (0 = full frame)
 	std::string s_lastError;
 	std::string s_lastPath;
 	std::string s_outDir;
+	std::string s_hdrPngDir;        // "Converted HDR Screenshots" (SDR PNG copies)
 	CRITICAL_SECTION s_cs;
 	bool s_csInit = false;
 
@@ -30,7 +33,7 @@ namespace
 	{
 		SYSTEMTIME st; GetLocalTime(&st);
 		char buf[128];
-		sprintf_s(buf, "CSK_%04d-%02d-%02d_%02d-%02d-%02d-%03d.%s",
+		sprintf_s(buf, "DirectorScreenshot_%04d-%02d-%02d_%02d-%02d-%02d-%03d.%s",
 			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, ext);
 		return buf;
 	}
@@ -53,6 +56,133 @@ namespace
 		dir = (slash == std::string::npos) ? "." : dir.substr(0, slash);
 		s_outDir = dir + "\\Captured Screenshots";
 		CreateDirectoryA(s_outDir.c_str(), nullptr);
+	}
+
+	// Sibling folder for the SDR PNG copies auto-converted from HDR (.jxr) shots.
+	void EnsureHdrPngDir()
+	{
+		if (!s_hdrPngDir.empty()) return;
+		char path[MAX_PATH];
+		GetModuleFileNameA(nullptr, path, MAX_PATH);
+		std::string dir(path);
+		size_t slash = dir.find_last_of("\\/");
+		dir = (slash == std::string::npos) ? "." : dir.substr(0, slash);
+		s_hdrPngDir = dir + "\\Converted HDR Screenshots";
+		CreateDirectoryA(s_hdrPngDir.c_str(), nullptr);
+	}
+
+	std::string BaseNameNoExt(const std::string& full)
+	{
+		size_t slash = full.find_last_of("\\/");
+		std::string name = (slash == std::string::npos) ? full : full.substr(slash + 1);
+		size_t dot = name.find_last_of('.');
+		return (dot == std::string::npos) ? name : name.substr(0, dot);
+	}
+
+	// IEEE-754 half (binary16) -> float, for the R16G16B16A16_FLOAT HDR buffer.
+	inline float HalfToFloat(unsigned short h)
+	{
+		unsigned int sign = (h >> 15) & 1u;
+		unsigned int exp = (h >> 10) & 0x1Fu;
+		unsigned int mant = h & 0x3FFu;
+		unsigned int f;
+		if (exp == 0) {
+			if (mant == 0) f = sign << 31;
+			else {
+				exp = 127 - 15 + 1;
+				while ((mant & 0x400u) == 0) { mant <<= 1; exp--; }
+				mant &= 0x3FFu;
+				f = (sign << 31) | (exp << 23) | (mant << 13);
+			}
+		}
+		else if (exp == 0x1Fu) f = (sign << 31) | (0xFFu << 23) | (mant << 13);
+		else f = (sign << 31) | ((exp - 15 + 127) << 23) | (mant << 13);
+		float out; memcpy(&out, &f, 4); return out;
+	}
+
+	// Linear -> display sRGB OETF (gamma). The tone map below works in linear and
+	// hands display-ready [0,1] values here for 8-bit quantisation.
+	inline float SrgbEncode(float c)
+	{
+		if (c < 0.0f) c = 0.0f; if (c > 1.0f) c = 1.0f;
+		return c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+	}
+
+	inline float Luma(float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; }
+
+	inline BYTE To8(float c) { int v = (int)(c * 255.0f + 0.5f); return v < 0 ? 0 : (v > 255 ? 255 : (BYTE)v); }
+
+	// Tonemap the HDR float frame (cropped to the same rect as the .jxr) to an
+	// SDR PNG in "Converted HDR Screenshots". Best-effort: the .jxr is the primary
+	// artifact, so a failure here never fails the capture.
+	//
+	// The duplication buffer is scRGB (linear, 1.0 = 80 nits) and carries ABSOLUTE
+	// luminance, so we must NOT auto-expose: scene-adaptive exposure normalises
+	// every shot to the same brightness and lifts night scenes to look like day.
+	// Instead map a fixed reference paper-white to display white (so day stays
+	// bright, night stays dark - matching how Windows tonemaps the .jxr), then
+	// roll off highlights with an extended Reinhard curve and apply sRGB gamma.
+	//
+	// kPaperWhiteNits is the one knob: it is the HDR white level the shot was
+	// produced at (RDR2's in-game paper white, ~200 nits by default). Raise it if
+	// shots come out too bright, lower it if too dark.
+	void SaveHdrAsPng(IWICImagingFactory* factory, const D3D11_MAPPED_SUBRESOURCE& map,
+		UINT cropX, UINT cropY, UINT cropW, UINT cropH, const std::string& jxrPath)
+	{
+		if (!factory || cropW == 0 || cropH == 0) return;
+
+		const BYTE* base = static_cast<const BYTE*>(map.pData);
+		auto RowAt = [&](UINT y) {
+			return reinterpret_cast<const unsigned short*>(base + (size_t)(cropY + y) * map.RowPitch) + (size_t)cropX * 4;
+		};
+
+		// Fixed exposure: scRGB 1.0 == 80 nits, so dividing by (paperWhite/80)
+		// puts reference white at display 1.0 and keeps absolute brightness.
+		const float kPaperWhiteNits = 200.0f;
+		const float exposure = 80.0f / kPaperWhiteNits;
+
+		// Expose, compress highlights on luminance (preserving colour ratios),
+		// gamma-encode.
+		const float Lw = 4.0f;            // white point: ~4x reference white rolls to display white
+		const float Lw2 = Lw * Lw;
+		std::vector<BYTE> bgra((size_t)cropW * cropH * 4);
+		for (UINT y = 0; y < cropH; ++y) {
+			const unsigned short* src = RowAt(y);
+			BYTE* dst = bgra.data() + (size_t)y * cropW * 4;
+			for (UINT x = 0; x < cropW; ++x) {
+				float r = HalfToFloat(src[0]) * exposure; if (r < 0.0f) r = 0.0f;
+				float g = HalfToFloat(src[1]) * exposure; if (g < 0.0f) g = 0.0f;
+				float b = HalfToFloat(src[2]) * exposure; if (b < 0.0f) b = 0.0f;
+				float lum = Luma(r, g, b);
+				float tl = lum * (1.0f + lum / Lw2) / (1.0f + lum); // extended Reinhard
+				float ratio = (lum > 1e-6f) ? (tl / lum) : 0.0f;
+				if (ratio > 2.0f) ratio = 2.0f;                    // guard against oversaturation
+				dst[0] = To8(SrgbEncode(b * ratio)); // B
+				dst[1] = To8(SrgbEncode(g * ratio)); // G
+				dst[2] = To8(SrgbEncode(r * ratio)); // R
+				dst[3] = 255;
+				src += 4; dst += 4;
+			}
+		}
+
+		EnsureHdrPngDir();
+		std::wstring wpath = Widen(s_hdrPngDir + "\\" + BaseNameNoExt(jxrPath) + ".png");
+
+		IWICStream* st = nullptr; IWICBitmapEncoder* enc = nullptr; IWICBitmapFrameEncode* fr = nullptr;
+		do {
+			if (FAILED(factory->CreateStream(&st))) break;
+			if (FAILED(st->InitializeFromFilename(wpath.c_str(), GENERIC_WRITE))) break;
+			if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &enc))) break;
+			if (FAILED(enc->Initialize(st, WICBitmapEncoderNoCache))) break;
+			if (FAILED(enc->CreateNewFrame(&fr, nullptr))) break;
+			if (FAILED(fr->Initialize(nullptr))) break;
+			if (FAILED(fr->SetSize(cropW, cropH))) break;
+			WICPixelFormatGUID pf = GUID_WICPixelFormat32bppBGRA;
+			fr->SetPixelFormat(&pf);
+			if (FAILED(fr->WritePixels(cropH, cropW * 4, (UINT)bgra.size(), bgra.data()))) break;
+			fr->Commit(); enc->Commit();
+		} while (false);
+		SafeRelease(fr); SafeRelease(enc); SafeRelease(st);
 	}
 
 	void SetError(const std::string& msg) { s_lastError = msg; }
@@ -86,47 +216,81 @@ namespace
 			if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache))) { SetError("encoder init"); break; }
 			if (FAILED(encoder->CreateNewFrame(&frame, nullptr))) { SetError("frame create"); break; }
 			if (FAILED(frame->Initialize(nullptr))) { SetError("frame init"); break; }
-			if (FAILED(frame->SetSize(w, h))) { SetError("set size"); break; }
-
 			// Source pixel format from the duplicated buffer
 			WICPixelFormatGUID srcFmt;
-			UINT bppSrc;
 			switch (fmt) {
-				case DXGI_FORMAT_R16G16B16A16_FLOAT: srcFmt = GUID_WICPixelFormat64bppRGBAHalf; bppSrc = 8; break;
-				case DXGI_FORMAT_R10G10B10A2_UNORM:  srcFmt = GUID_WICPixelFormat32bppR10G10B10A2; bppSrc = 4; break;
-				case DXGI_FORMAT_B8G8R8A8_UNORM:     srcFmt = GUID_WICPixelFormat32bppBGRA; bppSrc = 4; break;
-				case DXGI_FORMAT_R8G8B8A8_UNORM:     srcFmt = GUID_WICPixelFormat32bppRGBA; bppSrc = 4; break;
-				default:                             srcFmt = GUID_WICPixelFormat32bppBGRA; bppSrc = 4; break;
+				case DXGI_FORMAT_R16G16B16A16_FLOAT: srcFmt = GUID_WICPixelFormat64bppRGBAHalf; break;
+				case DXGI_FORMAT_R10G10B10A2_UNORM:  srcFmt = GUID_WICPixelFormat32bppR10G10B10A2; break;
+				case DXGI_FORMAT_B8G8R8A8_UNORM:     srcFmt = GUID_WICPixelFormat32bppBGRA; break;
+				case DXGI_FORMAT_R8G8B8A8_UNORM:     srcFmt = GUID_WICPixelFormat32bppRGBA; break;
+				default:                             srcFmt = GUID_WICPixelFormat32bppBGRA; break;
 			}
+
+			// Centre-crop to the chosen aspect ratio so "Square 1:1", "9:16" etc.
+			// produce a file that is actually that shape - not the full frame with
+			// black bars. The math mirrors DrawAspectFrame's centred bars, so the
+			// crop keeps exactly the region inside the on-screen guide.
+			UINT cropX = 0, cropY = 0, cropW = w, cropH = h;
+			float aspect = s_cropAspect.load();
+			if (aspect > 0.0001f && w > 0 && h > 0) {
+				float screen = (float)w / (float)h;
+				if (aspect < screen) {           // taller target -> trim width (pillarbox)
+					cropW = (UINT)((float)h * aspect + 0.5f);
+					if (cropW < 1) cropW = 1; if (cropW > w) cropW = w;
+					cropX = (w - cropW) / 2;
+				}
+				else if (aspect > screen) {      // wider target -> trim height (letterbox)
+					cropH = (UINT)((float)w / aspect + 0.5f);
+					if (cropH < 1) cropH = 1; if (cropH > h) cropH = h;
+					cropY = (h - cropH) / 2;
+				}
+			}
+			bool cropped = (cropW != w || cropH != h);
+
+			if (FAILED(frame->SetSize(cropW, cropH))) { SetError("set size"); break; }
 
 			WICPixelFormatGUID outFmt = srcFmt;
 			frame->SetPixelFormat(&outFmt);
 
-			// If the encoder cannot take the source format directly, convert.
-			if (outFmt != srcFmt) {
-				IWICBitmap* bmp = nullptr;
-				if (FAILED(factory->CreateBitmapFromMemory(w, h, srcFmt, map.RowPitch,
-					map.RowPitch * h, (BYTE*)map.pData, &bmp))) { SetError("bmp from mem"); break; }
-				IWICFormatConverter* conv = nullptr;
-				if (FAILED(factory->CreateFormatConverter(&conv))) { bmp->Release(); SetError("converter"); break; }
-				if (FAILED(conv->Initialize(bmp, outFmt, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
-					conv->Release(); bmp->Release(); SetError("convert init"); break;
+			// Wrap the duplicated pixels in a WIC source, clip to the crop rect,
+			// and convert if the encoder cannot take the source format directly.
+			IWICBitmap* bmp = nullptr;
+			if (FAILED(factory->CreateBitmapFromMemory(w, h, srcFmt, map.RowPitch,
+				map.RowPitch * h, (BYTE*)map.pData, &bmp))) { SetError("bmp from mem"); break; }
+
+			IWICBitmapSource*  src = bmp;
+			IWICBitmapClipper* clip = nullptr;
+			IWICFormatConverter* conv = nullptr;
+			HRESULT wr = S_OK;
+			do {
+				if (cropped) {
+					if (FAILED(factory->CreateBitmapClipper(&clip))) { wr = E_FAIL; SetError("clipper"); break; }
+					WICRect rc{ (INT)cropX, (INT)cropY, (INT)cropW, (INT)cropH };
+					if (FAILED(clip->Initialize(bmp, &rc))) { wr = E_FAIL; SetError("clip init"); break; }
+					src = clip;
 				}
-				HRESULT wr = frame->WriteSource(conv, nullptr);
-				conv->Release(); bmp->Release();
-				if (FAILED(wr)) { SetError("write source"); break; }
-			}
-			else {
-				if (FAILED(frame->WritePixels(h, map.RowPitch, map.RowPitch * h, (BYTE*)map.pData))) {
-					SetError("write pixels"); break;
+				if (outFmt != srcFmt) {
+					if (FAILED(factory->CreateFormatConverter(&conv))) { wr = E_FAIL; SetError("converter"); break; }
+					if (FAILED(conv->Initialize(src, outFmt, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+						wr = E_FAIL; SetError("convert init"); break;
+					}
+					src = conv;
 				}
-			}
+				wr = frame->WriteSource(src, nullptr);
+				if (FAILED(wr)) SetError("write source");
+			} while (false);
+			SafeRelease(conv); SafeRelease(clip); bmp->Release();
+			if (FAILED(wr)) break;
 
 			if (FAILED(frame->Commit())) { SetError("frame commit"); break; }
 			if (FAILED(encoder->Commit())) { SetError("encoder commit"); break; }
 
 			s_lastPath = path;
 			rc = isHDR ? ScreenCapture::CAP_OK_HDR : ScreenCapture::CAP_OK_PNG;
+
+			// HDR shots also get a tonemapped SDR PNG copy in a sibling folder, so
+			// they are viewable anywhere while the lossless .jxr stays the master.
+			if (isHDR) SaveHdrAsPng(factory, map, cropX, cropY, cropW, cropH, path);
 		} while (false);
 
 		SafeRelease(frame);
@@ -384,13 +548,14 @@ namespace ScreenCapture
 		return ok;
 	}
 
-	void RequestCapture()
+	void RequestCapture(float cropAspect)
 	{
 		if (!s_csInit) { InitializeCriticalSection(&s_cs); s_csInit = true; }
 		bool expected = false;
 		if (!s_busy.compare_exchange_strong(expected, true)) {
 			return; // already running
 		}
+		s_cropAspect.store(cropAspect);
 		s_done.store(false);
 
 		std::thread([] {

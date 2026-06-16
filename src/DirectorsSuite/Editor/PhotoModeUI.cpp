@@ -42,6 +42,14 @@ extern const char* PMAspectName(int idx)
 	return PMAspects[idx].label;
 }
 
+// Ratio the next screenshot should be cropped to (0 = full frame). Only while
+// Photo Mode is open and an aspect frame other than "Off" is selected.
+float CPhotoMode::CurrentCropAspect() const
+{
+	if (!m_active || m_aspectIdx <= 0 || m_aspectIdx >= PMAspectCount) return 0.0f;
+	return PMAspects[m_aspectIdx].ratio;
+}
+
 void CPhotoMode::DrawAspectFrame()
 {
 	if (m_aspectIdx <= 0 || m_aspectIdx >= PMAspectCount) return;
@@ -167,7 +175,9 @@ static void PMDrawCrosshair()
 void CPhotoMode::DrawSunCompass()
 {
 	const float aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
-	const float boxCx = 0.885f, boxCy = 0.235f, boxW = 0.200f, boxH = 0.350f;
+	// Box extends below the ring to hold two readout lines (sun + camera). Top is
+	// kept fixed (0.060) so the title/ring don't move; only the bottom grows.
+	const float boxCx = 0.885f, boxCy = 0.2525f, boxW = 0.200f, boxH = 0.385f;
 	const float boxTop = boxCy - boxH * 0.5f;
 	const float cx = 0.885f, cy = 0.245f, R = 0.108f, lo = 0.022f;
 
@@ -211,6 +221,21 @@ void CPhotoMode::DrawSunCompass()
 	dot(sx, sy, 0.0220f, sr, sg, sb, 90);   // glow
 	dot(sx, sy, 0.0130f, sr, sg, sb, 255);  // core
 
+	// camera-facing indicator: a marker on the horizon ring showing which compass
+	// direction the lens currently points, so the user can place the sun relative
+	// to the shot (opposite the ring marker = backlight/rim, alongside = frontlit).
+	// The cam bearing is purely horizontal, so it always sits on the ring.
+	Vector3 camDir = EMath::RotationToDirection(CAM::GET_FINAL_RENDERED_CAM_ROT(2));
+	float camA = atan2f(camDir.x, camDir.y); // clockwise from N, same convention as azimuth
+	float cmx = cx + sinf(camA) * R / aspect;
+	float cmy = cy - cosf(camA) * R;
+	for (int i = 1; i <= 3; i++) { // short outward tick so it reads as "facing this way"
+		float t = 0.82f + i * 0.06f;
+		dot(cx + sinf(camA) * R * t / aspect, cy - cosf(camA) * R * t, 0.0040f, 80, 200, 255, 170);
+	}
+	dot(cmx, cmy, 0.0190f, 80, 200, 255, 90);   // glow
+	dot(cmx, cmy, 0.0105f, 80, 200, 255, 255);  // core
+
 	// readout
 	int az = (int)(m_sunAzimuth + 0.5f) % 360; if (az < 0) az += 360;
 	int eli = (int)(m_sunElevation >= 0.0f ? m_sunElevation + 0.5f : m_sunElevation - 0.5f);
@@ -218,6 +243,10 @@ void CPhotoMode::DrawSunCompass()
 	if (below) read += "  (below)";
 	Drawing::DrawFormattedText(read, Font::Body, below ? 255 : 235, below ? 180 : 235, below ? 120 : 235, 240,
 		Alignment::Center, 13, SCREEN_WIDTH * cx, SCREEN_HEIGHT * (cy + R + lo + 0.020f));
+
+	int cb = (int)(camA * EMath::RAD2DEG + 0.5f); cb %= 360; if (cb < 0) cb += 360;
+	Drawing::DrawFormattedText("Camera faces " + std::to_string(cb), Font::Body, 80, 200, 255, 235,
+		Alignment::Center, 12, SCREEN_WIDTH * cx, SCREEN_HEIGHT * (cy + R + lo + 0.040f));
 }
 
 // ---------------------------------------------------------------------------
@@ -226,9 +255,10 @@ void CPhotoMode::DrawSunCompass()
 
 void CPhotoMode::DrawOverlays()
 {
-	// Aspect crop bars are part of the composition, not editor chrome - they
-	// stay up when the UI is hidden and during a screenshot grab.
-	DrawAspectFrame();
+	// Aspect crop bars are the framing guide: they stay up when the UI is hidden
+	// (so you can compose a clean shot) but are suppressed during the actual grab
+	// - the saved file is centre-cropped to the ratio instead of baking in bars.
+	if (!ScreenCapture::IsCapturing()) DrawAspectFrame();
 
 	// Grid, gizmos and control hints are editor aids: hidden with the UI and
 	// during capture.

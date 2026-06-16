@@ -73,6 +73,10 @@ public:
 	void Deactivate();
 	bool IsActive() const { return m_active; }
 
+	// Target width:height for the next screenshot so the saved file is cropped to
+	// the chosen aspect frame. 0 when Photo Mode is closed or the frame is "Off".
+	float CurrentCropAspect() const;
+
 	void Tick(); // input + camera + world upkeep + UI; every frame
 
 private:
@@ -224,6 +228,8 @@ private:
 	bool  m_autoFocus = false;   // keep the focal plane locked on the subject (Arthur/John by default)
 	bool  m_dofDirty = false;
 	bool  m_dofApplied = false;  // the DOF param block is currently active on the cam
+	bool  m_dofLockActive = false;     // Composition page built with the lens locked (DoF on)
+	bool  m_compRebuildPending = false;// re-skin the Composition page after a DoF on/off transition
 
 	// --- post ---
 	int   m_gradeIdx = 0;
@@ -264,7 +270,7 @@ private:
 	void RebuildLightingPage();
 	void RebuildPostPage();
 	void RebuildEffectsPage();
-	void RebuildMusicPage();
+	void RebuildCapturesPage();
 	void RebuildSettingsPage();    // free-cam speed / sensitivity (shared g_Config)
 	void RebuildCreditsPage();     // credits (mirrors the main menu's credits)
 	bool m_menusBuilt = false;

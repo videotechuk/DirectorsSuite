@@ -33,6 +33,7 @@
     <ClCompile Include="Editor\SceneEditor.cpp" />
     <ClCompile Include="Editor\SceneData.cpp" />
     <ClCompile Include="Editor\ScreenCapture.cpp" />
+    <ClCompile Include="Editor\CaptureGallery.cpp" />
     <ClCompile Include="Editor\TimecycleRT.cpp" />
     <ClCompile Include="Editor\PhotoAudio.cpp" />
     <ClCompile Include="Editor\BlackBarsPatch.cpp" />
@@ -84,6 +85,7 @@
     <ClInclude Include="Editor\Data\ScenePedsData.h" />
     <ClInclude Include="Editor\Data\SceneScenariosData.h" />
     <ClInclude Include="Editor\ScreenCapture.h" />
+    <ClInclude Include="Editor\CaptureGallery.h" />
     <ClInclude Include="Editor\TimecycleRT.h" />
     <ClInclude Include="Editor\PhotoAudio.h" />
     <ClInclude Include="Editor\BlackBarsPatch.h" />

@@ -12,6 +12,7 @@
 #include "PhotoAudio.h"
 #include "BlackBarsPatch.h"
 #include "ScreenCapture.h"
+#include "CaptureGallery.h"
 #include "SceneEditor.h"
 #include "SceneSteppers.h"
 #include "KeyBind.h"
@@ -501,8 +502,8 @@ void CPhotoMode::UpdateWorld()
 // split across sun_direction_x/y/z; the previous build only surfaced two of
 // the three axes, so the sun could swing around the horizon but never change
 // height. Azimuth + Elevation rebuild the whole normalized vector so the sun
-// moves in every direction. Default azimuth 0 / elevation 0 reproduces the
-// engine default (0, -1, 0).
+// moves in every direction. Azimuth is a true compass bearing: 0 = North (+Y),
+// 90 = East (+X); elevation 0 sits on the horizon, 90 straight overhead.
 void CPhotoMode::ApplySunDirection()
 {
 	if (m_sunVarX < 0 || m_sunVarY < 0) return; // need the horizontal axes at least
@@ -511,8 +512,14 @@ void CPhotoMode::ApplySunDirection()
 	float el = m_sunElevation * EMath::DEG2RAD;
 	float ce = cosf(el);
 
+	// Azimuth is a true compass bearing measured clockwise from North (0 = N,
+	// 90 = E, 180 = S, 270 = W), matching the Sun Position map and the camera
+	// marker. World +Y is North and +X is East, so North must map to +Y: dy uses
+	// +cos(az), not -cos(az). The earlier -cos put the sun 180 degrees off on the
+	// N/S axis (Dir 0 lit from the south), which is what made the markers disagree
+	// with the actual sky.
 	float dx = ce * sinf(az);
-	float dy = -ce * cosf(az);
+	float dy = ce * cosf(az);
 	float dz = sinf(el);
 
 	TimecycleRT::ApplyVarToScene(m_sunVarX, dx);
@@ -1352,8 +1359,6 @@ namespace
 
 	// Mirror bools for toggles whose setter has a guard / indirection.
 	bool sPMFreeze = false;
-	bool sPMMute = true;
-	bool sPMMusic = false;
 	bool sPMNoBars = false;
 }
 
@@ -1376,16 +1381,16 @@ void CPhotoMode::BuildPhotoMenus()
 	// opened, a one-time tip card explains the feature and how to use it for shots.
 	g_Menu->AddSubmenu("PHOTO MODE", "Director's Suite Photo Mode", Submenu_PhotoMode, 13, [this](Submenu* sub)
 	{
-		sub->AddRegularOption("Camera", "Lens, framing, depth of field and auto-focus", [this] { RebuildCameraPage();    g_Menu->GoToSubmenu(Submenu_PhotoMode_Camera); ShowTabTip(0, "Camera: fly the lens freely, orbit a subject, and dial in FOV, roll and depth of field. Frame the exact angle and focus for your shot."); });
-		sub->AddRegularOption("World", "Freeze time, set time of day, weather and the moon", [this] { RebuildWorldPage();    g_Menu->GoToSubmenu(Submenu_PhotoMode_World); ShowTabTip(1, "World: freeze time, and set the time of day, weather and moon. Lock the exact moment you want to capture."); });
-		sub->AddRegularOption("Character", "Pick a subject, pose, expressions, become a character", [this] { RebuildCharacterPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Character); ShowTabTip(2, "Character: pick any nearby person or animal as your subject, then pose them, set an expression, look at camera, or become a character. Direct who is in frame."); });
-		sub->AddRegularOption("Lighting", "Scene lights (X/Y/Z), the sun (azimuth/elevation), Rockstar & 3-point hero rigs", [this] { RebuildLightingPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Lighting); ShowTabTip(3, "Lighting: position scene lights by X/Y/Z, aim the sun with azimuth/elevation, and add the Rockstar or 3-point hero rig. Sculpt mood, highlights and shadows on your subject."); });
-		sub->AddRegularOption("Post", "Color grades, motion blur, aspect frames, grid", [this] { RebuildPostPage();     g_Menu->GoToSubmenu(Submenu_PhotoMode_Post); ShowTabTip(4, "Post: apply color grades, motion blur, aspect-ratio bars and a grid. Give the shot a cinematic look and clean composition."); });
-		sub->AddRegularOption("Effects", "Photo filters and lossless / HDR screenshots", [this] { RebuildEffectsPage();  g_Menu->GoToSubmenu(Submenu_PhotoMode_Effects); ShowTabTip(5, "Effects: stack authentic photo filters and take a lossless or HDR screenshot - a final stylized pass right before you capture."); });
+		sub->AddRegularOption("Composition Settings", "Lens, aspect frame, depth of field, freeze and black bars", [this] { RebuildCameraPage();    g_Menu->GoToSubmenu(Submenu_PhotoMode_Camera); ShowTabTip(0, "Composition Settings: fly the lens freely, orbit a subject, and dial in FOV, roll, aspect frame and depth of field. Freeze the world, step it forward a frame, and drop the ultrawide black bars to frame the exact shot."); });
+		sub->AddRegularOption("Lighting Settings", "Scene lights (X/Y/Z), the sun (direction/height), Rockstar & 3-point hero rigs", [this] { RebuildLightingPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Lighting); ShowTabTip(3, "Lighting Settings: position scene lights by X/Y/Z, aim the sun with direction/height, and add the Rockstar or 3-point hero rig. Sculpt mood, highlights and shadows on your subject."); });
+		sub->AddRegularOption("Time & Weather", "Freeze time, set time of day, weather and the moon", [this] { RebuildWorldPage();    g_Menu->GoToSubmenu(Submenu_PhotoMode_World); ShowTabTip(1, "Time & Weather: freeze time, and set the time of day, weather and moon. Lock the exact moment you want to capture."); });
+		sub->AddRegularOption("Character Settings", "Pick a subject, pose, expressions, become a character", [this] { RebuildCharacterPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Character); ShowTabTip(2, "Character Settings: pick any nearby person or animal as your subject, then pose them, set an expression, look at camera, or become a character. Direct who is in frame."); });
+		sub->AddRegularOption("Post Effects", "Color grades, motion blur, letterbox, grid", [this] { RebuildPostPage();     g_Menu->GoToSubmenu(Submenu_PhotoMode_Post); ShowTabTip(4, "Post Effects: apply color grades, motion blur, cinematic letterbox and a grid. Give the shot a cinematic look and clean composition."); });
+		sub->AddRegularOption("Filters", "Photo filters and lossless / HDR screenshots", [this] { RebuildEffectsPage();  g_Menu->GoToSubmenu(Submenu_PhotoMode_Effects); ShowTabTip(5, "Filters: stack authentic photo filters and take a lossless or HDR screenshot - a final stylized pass right before you capture."); });
 		sub->AddRegularOption("Scene Editor (Beta)", "Place props, direct actors with scenarios, and make temporary world edits", [this] { RebuildScenePage();     g_Menu->GoToSubmenu(Submenu_PhotoMode_Scene); ShowTabTip(6, "Scene Editor: stage a whole scene - place props, spawn and direct actors with scenarios, and make temporary world edits. Build the moment your shot needs."); });
-		sub->AddRegularOption("Music", "Background track and world-audio mute", [this] { RebuildMusicPage();    g_Menu->GoToSubmenu(Submenu_PhotoMode_Music); ShowTabTip(7, "Music: choose a background track and mute world audio. Set the mood while you compose and record."); });
+		sub->AddRegularOption("Captures", "Browse and view your saved screenshots in-game", [this] { RebuildCapturesPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Captures); ShowTabTip(9, "Captures: review your shots without leaving the game. Open the gallery, move the highlight with the arrows, Enter opens a shot full-screen, F filters by date, and Backspace closes."); });
 		sub->AddRegularOption("Take Screenshot (Lossless/HDR)", "Saves exactly what is on screen. Also bound to F3", [] {
-			if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); }
+			if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(g_PhotoMode.CurrentCropAspect()); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); }
 		});
 		sub->AddEmptyOption("- Settings & Credits -");
 		sub->AddRegularOption("Settings", "Free-cam speed and look sensitivity (shared with the main menu)", [this] { RebuildSettingsPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Settings); ShowTabTip(8, "Settings: tune free-cam speed and look sensitivity for smooth, precise camera moves."); });
@@ -1400,7 +1405,7 @@ void CPhotoMode::BuildPhotoMenus()
 	RebuildLightingPage();
 	RebuildPostPage();
 	RebuildEffectsPage();
-	RebuildMusicPage();
+	RebuildCapturesPage();
 	RebuildScenePage();
 	RebuildSettingsPage();
 	RebuildCreditsPage();
@@ -1475,14 +1480,73 @@ void CPhotoMode::RebuildCreditsPage()
 
 void CPhotoMode::RebuildCameraPage()
 {
-	g_Menu->AddSubmenu("PHOTO MODE", "Camera", Submenu_PhotoMode_Camera, 10, [this](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Composition Settings", Submenu_PhotoMode_Camera, 12, [this](Submenu* sub)
 	{
-		auto fovs = PMRange(5.0f, 120.0f, 1.0f, 0);
-		sub->AddVectorOption("Field Of View", "Lower = more zoom. Updates the lens live", fovs, [this] {
-			m_fov = PMFromIdx(CurIdx(), 5.0f, 1.0f);
-			if (m_cam != 0) CAM::SET_CAM_FOV(m_cam, m_fov);
-		})->SetVectorIndex(PMIdx(m_fov, 5.0f, 1.0f, (int)fovs.size()));
+		// --- Freeze & framing: shape the moment you're capturing ---
+		sub->AddEmptyOption("- FREEZE METHOD -");
 
+		sub->AddVectorOption("Freeze Method", "Time Scale keeps your full screen ratio; native freeze crops ultrawide", std::vector<const char*>{ "Time Scale", "Photo Mode Native" }, [this] {
+			bool wasFrozen = m_frozen;
+			if (wasFrozen) SetFrozen(false);
+			m_freezeMethod = CurIdx() % 2;
+			if (wasFrozen) { sPMFreeze = true; SetFrozen(true); }
+			// Black Bars only exists under the native freeze; drop the patch and
+			// re-skin the row (greyed) whenever we leave Photo Mode Native.
+			if (m_freezeMethod != 1 && BlackBarsPatch::IsApplied()) BlackBarsPatch::Revert();
+			m_compRebuildPending = true;
+		})->SetVectorIndex(m_freezeMethod);
+
+		sub->AddRegularOption("Frame Forward", "Advance the frozen world by a single step", [this] { FrameForward(); });
+
+		// Engine-level removal of the native photo-mode 16:9 crop (the black bars
+		// on ultrawide). This patches the live game image in memory - global and
+		// build-dependent - so it reports back whether it actually took. The bars
+		// only appear under the Photo Mode Native freeze, so the patch is only
+		// offered there; under Time Scale (full ratio already) it is greyed out.
+		sPMNoBars = BlackBarsPatch::IsApplied();
+		if (m_freezeMethod == 1) {
+			sub->AddBoolOption("Remove Black Bars [Photo Mode Freeze]", "Patches RDR2 in memory to drop the photo-mode 16:9 crop on ultrawide", &sPMNoBars, [] {
+				bool ok = sPMNoBars ? BlackBarsPatch::Apply() : BlackBarsPatch::Revert();
+				sPMNoBars = BlackBarsPatch::IsApplied();
+				UIUtil::PrintSubtitle((ok || !sPMNoBars ? "~COLOR_GREEN~" : "~COLOR_RED~") + std::string(BlackBarsPatch::LastResult()) + "~s~");
+			});
+		}
+		else {
+			Option* o = sub->AddRegularOption("Remove Black Bars [Photo Mode Freeze]",
+				"Only with Freeze Method = Photo Mode Native. Time Scale already keeps your full screen ratio, so there are no bars to remove", [this] {
+					UIUtil::PrintSubtitle("~COLOR_YELLOW~Black Bars unavailable~s~ - set Freeze Method to Photo Mode Native to remove the photo-mode crop. Time Scale already keeps your full ratio.");
+				});
+			o->TextR = 120; o->TextG = 120; o->TextB = 120; // greyed = disabled
+		}
+
+		// --- Lens & framing ---
+		// Field Of View is the only lens control the native DOF parameter block
+		// overrides (its focal length competes with SET_CAM_FOV), so it is the only
+		// option that locks while Depth of Field is active - everything else stays
+		// editable. FOV stays one row in both states, so the cursor keeps its place
+		// when the section re-skins on a DoF on/off transition.
+		bool dofLock = (m_blurStrength > 0.0f);
+		m_dofLockActive = dofLock;
+
+		sub->AddEmptyOption("- CAMERA SETTINGS -");
+
+		if (dofLock) {
+			Option* o = sub->AddRegularOption("Field Of View   [ " + std::to_string((int)(m_fov + 0.5f)) + " ]",
+				"Locked while Depth of Field is active - the lens runs on the official Photo Mode camera. Set Blur Intensity to 0 to edit", [this] {
+					UIUtil::PrintSubtitle("~COLOR_YELLOW~Field Of View locked~s~ - Depth of Field is driving the lens through the official Photo Mode camera. Set Blur Intensity to 0 to edit.");
+				});
+			o->TextR = 120; o->TextG = 120; o->TextB = 120; // greyed = disabled
+		}
+		else {
+			auto fovs = PMRange(5.0f, 120.0f, 1.0f, 0);
+			sub->AddVectorOption("Field Of View", "Lower = more zoom. Updates the lens live", fovs, [this] {
+				m_fov = PMFromIdx(CurIdx(), 5.0f, 1.0f);
+				if (m_cam != 0) CAM::SET_CAM_FOV(m_cam, m_fov);
+			})->SetVectorIndex(PMIdx(m_fov, 5.0f, 1.0f, (int)fovs.size()));
+		}
+
+		// Roll stays editable even with DoF on - it only rotates the camera, the
+		// native DOF block doesn't touch it.
 		auto rolls = PMRange(-180.0f, 180.0f, 1.0f, 0);
 		sub->AddVectorOption("Roll", "Dutch angle (also Q/E while flying; R resets)", rolls, [this] {
 			m_rot.y = PMFromIdx(CurIdx(), -180.0f, 1.0f);
@@ -1500,6 +1564,15 @@ void CPhotoMode::RebuildCameraPage()
 			}
 		});
 		sub->AddBoolOption("Track Target", "Lock-on: the camera keeps pointing at the subject", &m_trackTarget);
+
+		std::vector<std::string> aspects; for (int i = 0; i < PMAspectCount; i++) aspects.push_back(PMAspectName(i));
+		sub->AddVectorOption("Aspect Frame", "On-screen guide bars only. F3 saves the real cropped ratio, not an image with the bars baked in", aspects, [this] {
+			m_aspectIdx = CurIdx();
+		})->SetVectorIndex(m_aspectIdx);
+
+		// --- Depth of field ---
+		sub->AddEmptyOption("- DEPTH OF FIELD -");
+
 		sub->AddBoolOption("Auto Focus Subject", "Keep the focal plane on the subject. Raise Blur to see it", &m_autoFocus, [this] { m_dofDirty = true; });
 
 		auto focus = PMRange(0.3f, 150.0f, 0.3f, 1);
@@ -1508,8 +1581,15 @@ void CPhotoMode::RebuildCameraPage()
 		})->SetVectorIndex(PMIdx(m_focusDist, 0.3f, 0.3f, (int)focus.size()));
 
 		auto blur = PMRange(0.0f, 1.0f, 0.05f, 2);
-		sub->AddVectorOption("Blur Intensity", "Depth of field strength. Reads stronger at night", blur, [this] {
+		sub->AddVectorOption("Blur Intensity", "Depth of field strength. Reads stronger at night. Locks the lens controls while active", blur, [this] {
 			m_blurStrength = PMFromIdx(CurIdx(), 0.0f, 0.05f); m_dofDirty = true;
+			// Crossing the DoF on/off threshold flips the Camera Settings lock, so
+			// re-skin the page (deferred to avoid rebuilding it inside its callback).
+			bool nowLock = (m_blurStrength > 0.0f);
+			if (nowLock != m_dofLockActive) {
+				m_compRebuildPending = true;
+				if (nowLock) UIUtil::PrintSubtitle("~COLOR_YELLOW~Camera Settings locked~s~ - Depth of Field is now driving the lens through the official Photo Mode camera. Set Blur Intensity to 0 to edit.");
+			}
 		})->SetVectorIndex(PMIdx(m_blurStrength, 0.0f, 0.05f, (int)blur.size()));
 
 		sub->AddBoolOption("Focus Lock", "Freeze autofocus so the focal plane stays put", &m_focusLock, [this] { m_dofDirty = true; });
@@ -1519,28 +1599,9 @@ void CPhotoMode::RebuildCameraPage()
 void CPhotoMode::RebuildWorldPage()
 {
 	sPMFreeze = m_frozen;
-	g_Menu->AddSubmenu("PHOTO MODE", "World", Submenu_PhotoMode_World, 12, [this](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Time & Weather", Submenu_PhotoMode_World, 12, [this](Submenu* sub)
 	{
 		sub->AddBoolOption("Freeze World", "Halt the whole world; the camera stays free", &sPMFreeze, [this] { SetFrozen(sPMFreeze); });
-
-		sub->AddVectorOption("Freeze Method", "Time Scale keeps your full screen ratio; native freeze crops ultrawide", std::vector<const char*>{ "Time Scale", "Photo Mode Native" }, [this] {
-			bool wasFrozen = m_frozen;
-			if (wasFrozen) SetFrozen(false);
-			m_freezeMethod = CurIdx() % 2;
-			if (wasFrozen) { sPMFreeze = true; SetFrozen(true); }
-		})->SetVectorIndex(m_freezeMethod);
-
-		sub->AddRegularOption("Frame Forward", "Advance the frozen world by a single step", [this] { FrameForward(); });
-
-		// Engine-level removal of the native photo-mode 16:9 crop (the black bars
-		// on ultrawide). This patches the live game image in memory - global and
-		// build-dependent - so it reports back whether it actually took.
-		sPMNoBars = BlackBarsPatch::IsApplied();
-		sub->AddBoolOption("Remove Black Bars (engine patch)", "Patches RDR2 in memory to drop the photo-mode 16:9 crop on ultrawide. Global; depends on game build", &sPMNoBars, [] {
-			bool ok = sPMNoBars ? BlackBarsPatch::Apply() : BlackBarsPatch::Revert();
-			sPMNoBars = BlackBarsPatch::IsApplied();
-			UIUtil::PrintSubtitle((ok || !sPMNoBars ? "~COLOR_GREEN~" : "~COLOR_RED~") + std::string(BlackBarsPatch::LastResult()) + "~s~");
-		});
 
 		float curTod = (float)CLOCK::GET_CLOCK_HOURS() + (float)CLOCK::GET_CLOCK_MINUTES() / 60.0f;
 		auto tod = PMRange(0.0f, 23.75f, 0.25f, 2);
@@ -1602,7 +1663,7 @@ void CPhotoMode::RebuildCharacterPage()
 	int curSubject = 0;
 	for (int i = 0; i < (int)m_subjectList.size(); i++) if (m_subjectList[i] == m_target) { curSubject = i; break; }
 
-	g_Menu->AddSubmenu("PHOTO MODE", "Character", Submenu_PhotoMode_Character, 11, [this, subjectNames, curSubject](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Character Settings", Submenu_PhotoMode_Character, 11, [this, subjectNames, curSubject](Submenu* sub)
 	{
 		sub->AddVectorOption("Subject", "Cycle nearby characters (a marker floats over them)", subjectNames, [this] {
 			int i = CurIdx();
@@ -1663,7 +1724,7 @@ void CPhotoMode::RebuildCharacterPage()
 // only the Rockstar light rig is kept alongside the new props.
 void CPhotoMode::RebuildLightingPage()
 {
-	g_Menu->AddSubmenu("PHOTO MODE", "Lighting", Submenu_PhotoMode_Lighting, 10, [this](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Lighting Settings", Submenu_PhotoMode_Lighting, 10, [this](Submenu* sub)
 	{
 		// === Section 1: Rockstar light rig (pinned to the subject, real shadows) ===
 		// (Empty-option text starting with '-' renders as a centered title.)
@@ -1684,15 +1745,15 @@ void CPhotoMode::RebuildLightingPage()
 			// reflected here too).
 			if (!m_sunUserEdited) ComputeSunFromClock();
 
-			sub->AddEmptyOption("- SUN -");
+			sub->AddEmptyOption("- SUN EDITOR -");
 
 			auto az = PMRange(0.0f, 360.0f, 1.0f, 0);
-			sub->AddVectorOption("Sun Direction", "Turn the sun around you - which way it shines from. Starts at the current time-of-day position. Reverted on exit", az, [this] {
+			sub->AddVectorOption("Sun Direction", "Turn the sun around you - which way it shines from. Starts at the current time-of-day position. Reverted on exit. Sun editing by disquse", az, [this] {
 				m_sunAzimuth = PMFromIdx(CurIdx(), 0.0f, 1.0f); m_sunUserEdited = true; ApplySunDirection();
 			})->SetVectorIndex(PMIdx(m_sunAzimuth, 0.0f, 1.0f, (int)az.size()));
 
 			auto el = PMRange(-90.0f, 90.0f, 1.0f, 0);
-			sub->AddVectorOption("Sun Height", "Raise or lower the sun. Below 0 drops it under the horizon. Reverted on exit", el, [this] {
+			sub->AddVectorOption("Sun Height", "Raise or lower the sun. Below 0 drops it under the horizon. Reverted on exit. Sun editing by disquse", el, [this] {
 				m_sunElevation = PMFromIdx(CurIdx(), -90.0f, 1.0f); m_sunUserEdited = true; ApplySunDirection();
 			})->SetVectorIndex(PMIdx(m_sunElevation, -90.0f, 1.0f, (int)el.size()));
 		}
@@ -1771,7 +1832,7 @@ void CPhotoMode::RebuildLightingPage()
 
 void CPhotoMode::RebuildPostPage()
 {
-	g_Menu->AddSubmenu("PHOTO MODE", "Post", Submenu_PhotoMode_Post, 10, [this](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Post Effects", Submenu_PhotoMode_Post, 10, [this](Submenu* sub)
 	{
 		std::vector<std::string> grades; for (const auto& g : PMGrades) grades.push_back(g.label);
 		sub->AddVectorOption("Color Grade", "Real in-game grading looks; includes grain, vignette, lens", grades, [this] {
@@ -1787,11 +1848,6 @@ void CPhotoMode::RebuildPostPage()
 		sub->AddVectorOption("Motion Blur", "Camera motion blur for movement shots", mblur, [this] {
 			m_motionBlur = PMFromIdx(CurIdx(), 0.0f, 0.05f);
 		})->SetVectorIndex(PMIdx(m_motionBlur, 0.0f, 0.05f, (int)mblur.size()));
-
-		std::vector<std::string> aspects; for (int i = 0; i < PMAspectCount; i++) aspects.push_back(PMAspectName(i));
-		sub->AddVectorOption("Aspect Frame", "Crop bars for any format; drawn by the mod (full ratio respected)", aspects, [this] {
-			m_aspectIdx = CurIdx();
-		})->SetVectorIndex(m_aspectIdx);
 
 		// R*'s photo-mode render path + exposure/contrast trims (see ApplyEnhancedRender).
 		// It only engages under the native Photo Mode freeze, so enabling it
@@ -1836,7 +1892,7 @@ void CPhotoMode::RebuildPostPage()
 
 void CPhotoMode::RebuildEffectsPage()
 {
-	g_Menu->AddSubmenu("PHOTO MODE", "Effects", Submenu_PhotoMode_Effects, 10, [this](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Filters", Submenu_PhotoMode_Effects, 10, [this](Submenu* sub)
 	{
 		std::vector<std::string> filters;
 		for (int i = 0; i < (int)PhotoModeFilters.size(); i++) filters.push_back(i == 0 ? "None" : PhotoModeFilters[i]);
@@ -1850,7 +1906,7 @@ void CPhotoMode::RebuildEffectsPage()
 		})->SetVectorIndex(PMIdx(m_filterOpacity, 0.0f, 0.05f, (int)opacity.size()));
 
 		sub->AddRegularOption("Take Screenshot (Lossless/HDR)", "Saves an uncompressed PNG (or .jxr in HDR). Also F3", [] {
-			if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); UIUtil::PrintSubtitle("Capturing... saved to Captured Screenshots"); }
+			if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(g_PhotoMode.CurrentCropAspect()); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); UIUtil::PrintSubtitle("Capturing... saved to Captured Screenshots"); }
 		});
 
 		sub->AddVectorOption("Super-Res Factor", "Tile grid for the experimental high-resolution capture (output = factor x your screen)", std::vector<const char*>{ "2x", "3x" }, [this] {
@@ -1871,21 +1927,32 @@ void CPhotoMode::RebuildEffectsPage()
 	});
 }
 
-void CPhotoMode::RebuildMusicPage()
+// Captures: review saved screenshots without leaving the game. "View Captures"
+// raises a top-most overlay window (CaptureGallery) that composites the decoded
+// image over the live scene; Left/Right browse and Backspace closes it (handled
+// as a modal in HandleInput). Rebuilt on entry so the count is current.
+void CPhotoMode::RebuildCapturesPage()
 {
-	sPMMute = PhotoAudio::MuteWorld();
-	sPMMusic = PhotoAudio::MusicEnabled();
-	g_Menu->AddSubmenu("PHOTO MODE", "Music", Submenu_PhotoMode_Music, 8, [](Submenu* sub)
+	CaptureGallery::Refresh();
+	int count = CaptureGallery::Count();
+
+	g_Menu->AddSubmenu("PHOTO MODE", "Captures", Submenu_PhotoMode_Captures, 6, [count](Submenu* sub)
 	{
-		sub->AddBoolOption("Enable Music", "Off by default. Turn on to play a calm exploration bed over your shot", &sPMMusic, [] { PhotoAudio::SetMusicEnabled(sPMMusic); });
-
-		std::vector<std::string> tracks; for (int i = 0; i < PhotoAudio::TrackCount(); i++) tracks.push_back(PhotoAudio::TrackLabel(i));
-		sub->AddVectorOption("Music Track", "Ambient free-roam exploration beds. Switches live (also enables music). Some may not play from every location", tracks, [] {
-			PhotoAudio::SelectTrack(CurIdx());
-			sPMMusic = PhotoAudio::MusicEnabled();
-		})->SetVectorIndex(PhotoAudio::CurrentTrack());
-
-		sub->AddBoolOption("Mute Game Audio", "Duck the live world so only your chosen music plays", &sPMMute, [] { PhotoAudio::SetMuteWorld(sPMMute); });
+		if (count <= 0) {
+			sub->AddEmptyOption("- No captures yet -");
+			sub->AddRegularOption("Take a Screenshot (F3)", "Capture the current view; it will appear here", [] {
+				if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(g_PhotoMode.CurrentCropAspect()); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); UIUtil::PrintSubtitle("Capturing... saved to Captured Screenshots"); }
+			});
+		}
+		else {
+			sub->AddEmptyOption("- " + std::to_string(count) + (count == 1 ? " capture -" : " captures -"));
+			sub->AddRegularOption("View Captures", "Open the in-game gallery. Arrows move, Enter opens a shot, F filters by date, Backspace closes", [] {
+				if (!CaptureGallery::Open()) UIUtil::PrintSubtitle("No captures to show yet");
+			});
+		}
+		sub->AddRegularOption("Open Folder in Windows", "Open the Captured Screenshots folder in Explorer", [] {
+			CaptureGallery::OpenFolderInExplorer();
+		});
 	});
 }
 
@@ -1905,6 +1972,21 @@ void CPhotoMode::HandleInput()
 	// Nav SFX use the native Creator Suite menu's own sounds (played inside the
 	// menu's Handle* methods). We only silence them on slider auto-repeat so a
 	// held adjustment doesn't machine-gun the click.
+
+	// Captures viewer is modal: while the overlay is up it owns navigation so the
+	// menu underneath stays put. Grid: arrows move, Enter opens, F steps the date
+	// filter, Backspace closes. Single image: Left/Right browse, Enter/Backspace
+	// return to the grid. (The worker resolves each intent by current view.)
+	if (CaptureGallery::IsOpen()) {
+		if (IsKeyJustUp(VK_LEFT))   CaptureGallery::NavLeft();
+		if (IsKeyJustUp(VK_RIGHT))  CaptureGallery::NavRight();
+		if (IsKeyJustUp(VK_UP))     CaptureGallery::NavUp();
+		if (IsKeyJustUp(VK_DOWN))   CaptureGallery::NavDown();
+		if (IsKeyJustUp(VK_RETURN)) CaptureGallery::Activate();
+		if (IsKeyJustUp(VK_BACK))   CaptureGallery::Back();
+		if (IsKeyJustUp('F'))       CaptureGallery::CycleFilter();
+		return; // swallow all other input while viewing
+	}
 
 	// Hide the whole UI for a clean shot
 	if (IsKeyJustUp('H')) {
@@ -2098,6 +2180,9 @@ void CPhotoMode::Activate()
 
 	RegisterPrompts();
 
+	// Stand up the in-game captures overlay (worker thread + layered window).
+	CaptureGallery::Init();
+
 	m_active = true;
 
 	// Swap the world's audio for the editor ambience (duck score + walla, start
@@ -2124,6 +2209,10 @@ void CPhotoMode::Deactivate()
 
 	// Hide our control prompts.
 	UpdatePrompts(false);
+
+	// Tear down the captures overlay (closes the window + joins its worker thread).
+	CaptureGallery::Close();
+	CaptureGallery::Shutdown();
 
 	// Restore the world's audio.
 	PhotoAudio::Exit();
@@ -2264,7 +2353,7 @@ void CPhotoMode::Tick()
 
 	// Hide the native menu render with the H toggle, and also while a screenshot
 	// is being captured so the UI never appears in the saved image.
-	bool hideUI = m_uiHidden || ScreenCapture::IsCapturing();
+	bool hideUI = m_uiHidden || ScreenCapture::IsCapturing() || CaptureGallery::IsOpen();
 	g_Menu->SetForceHidden(hideUI);
 	// Native prompts get wiped by the HUD hide (and flash on unpause), so keep
 	// them off and use our self-drawn control hint bar (DrawControlHints) instead.
@@ -2283,9 +2372,17 @@ void CPhotoMode::Tick()
 	HandleInput();
 	if (!m_active) return; // an option (Exit Photo Mode / back at root) closed us
 
+	// While the captures gallery is up it owns the screen: skip camera/world/light
+	// updates so flying keys don't drift the shot behind the overlay.
+	if (CaptureGallery::IsOpen()) return;
+
 	// Apply any Scene Editor same-page refresh requested by an option callback
 	// (deferred so we never rebuild a submenu while its own callback is running).
 	PumpSceneRebuild();
+
+	// Re-skin the Composition page when Depth of Field toggles its lens lock.
+	// Same deferral reason; the row count is unchanged so the cursor stays put.
+	if (m_compRebuildPending) { m_compRebuildPending = false; RebuildCameraPage(); }
 
 	UpdateCamera();
 	UpdateWorld();

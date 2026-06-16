@@ -112,4 +112,5 @@ enum eSubmenuID : int
 	Submenu_PhotoMode_Settings,
 	Submenu_PhotoMode_Credits,            // Photo-Mode-local copy of the credits page
 	Submenu_PhotoMode_Keys,               // Photo-Mode-local key bindings page
+	Submenu_PhotoMode_Captures,           // browse / view saved screenshots in-game
 };
