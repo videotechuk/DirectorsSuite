@@ -79,6 +79,7 @@
     <ClInclude Include="Editor\SceneEditor.h" />
     <ClInclude Include="Editor\SceneData.h" />
     <ClInclude Include="Editor\SceneSteppers.h" />
+    <ClInclude Include="Editor\KeyBind.h" />
     <ClInclude Include="Editor\Data\SceneObjectsData.h" />
     <ClInclude Include="Editor\Data\ScenePedsData.h" />
     <ClInclude Include="Editor\Data\SceneScenariosData.h" />

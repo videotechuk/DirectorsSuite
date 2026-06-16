@@ -45,6 +45,7 @@ enum eSubmenuID : int
 	// Settings
 	Submenu_Settings,
 	Submenu_Settings_OBS,
+	Submenu_Settings_Keys,
 
 	// Help
 	Submenu_Help,
@@ -110,4 +111,5 @@ enum eSubmenuID : int
 	// with the main Director's Suite Settings page via g_Config).
 	Submenu_PhotoMode_Settings,
 	Submenu_PhotoMode_Credits,            // Photo-Mode-local copy of the credits page
+	Submenu_PhotoMode_Keys,               // Photo-Mode-local key bindings page
 };
