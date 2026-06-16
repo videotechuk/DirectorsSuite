@@ -1,14 +1,5 @@
 # Director's Suite
 
-**Direct and edit video content in Red Dead Redemption 2.**
-
-Red Dead Redemption 2 ships with no Rockstar Editor and no real video tools. Director's
-Suite rebuilds the concept on top of what the engine *does* expose — scripted cameras,
-the Photo Mode natives, the timecycle, weather and clock systems — into a single,
-creator-focused suite that feels closer to a lightweight film-production editor than a
-debug menu. Built on [ScriptHookRDR2](http://www.dev-c.com/rdr2/scripthookrdr2/) and the
-[RDR2 Native Menu Base](https://github.com/Halen84/RDR2-Native-Menu-Base) (MIT).
-
 ## Features
 
 - **Photo Mode** — a full capture suite with tabs for Camera, World, Character, Lighting,
