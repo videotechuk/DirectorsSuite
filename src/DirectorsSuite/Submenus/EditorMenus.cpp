@@ -1,4 +1,5 @@
 #include "EditorMenus.h"
+#include "..\Editor\KeyBind.h"
 #include <sstream>
 
 // ---------------------------------------------------------------------------
@@ -967,6 +968,11 @@ void CEditorMenus::BuildSettingsMenu()
 		sub->AddVectorOption("Look Sensitivity", "Mouse / stick sensitivity for free cam and orbit cameras", sens, [] {
 			g_Config.FreeCamMouseSensitivity = FloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.5f, 0.5f);
 		})->SetVectorIndex(FloatIndex(g_Config.FreeCamMouseSensitivity, 0.5f, 0.5f, (int)sens.size()));
+
+		sub->AddRegularOption("Key Bindings", "Rebind the hotkeys (open menu, Photo Mode, screenshot, cameras...)", [] {
+			g_Menu->AddSubmenu("DIRECTOR'S SUITE", "Key Bindings", Submenu_Settings_Keys, 12, [](Submenu* s) { KeyBind::BuildInto(s); });
+			g_Menu->GoToSubmenu(Submenu_Settings_Keys);
+		});
 
 		sub->AddRegularOption("Save Settings To INI", "Write the current settings to DirectorsSuite.ini", [] {
 			g_Config.Save();

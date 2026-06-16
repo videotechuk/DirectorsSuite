@@ -14,6 +14,7 @@
 #include "ScreenCapture.h"
 #include "SceneEditor.h"
 #include "SceneSteppers.h"
+#include "KeyBind.h"
 #include "..\script.h"
 #include "..\keyboard.h"
 #include "..\UI\UIUtil.h"
@@ -1433,6 +1434,11 @@ void CPhotoMode::RebuildSettingsPage()
 		})->SetVectorIndex(PMIdx(g_Config.FreeCamMouseSensitivity, 0.5f, 0.5f, (int)sens.size()));
 
 		sub->AddBoolOption("High Detail Streaming", "Stream the world around the camera for full detail anywhere", &g_Config.FreeCamHighDetail);
+
+		sub->AddRegularOption("Key Bindings", "Rebind the hotkeys (open menu, Photo Mode, screenshot, cameras...)", [] {
+			g_Menu->AddSubmenu("PHOTO MODE", "Key Bindings", Submenu_PhotoMode_Keys, 12, [](Submenu* s) { KeyBind::BuildInto(s); });
+			g_Menu->GoToSubmenu(Submenu_PhotoMode_Keys);
+		});
 
 		sub->AddRegularOption("Save Settings To INI", "Persist these values to DirectorsSuite.ini", [] {
 			g_Config.Save();
