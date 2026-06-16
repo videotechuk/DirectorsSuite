@@ -110,11 +110,6 @@ void CConfig::Load()
 	GridRows       = ReadInt("Interface", "GridRows", GridRows);
 	GridColumns    = ReadInt("Interface", "GridColumns", GridColumns);
 
-	PhotoMuteWorld     = ReadBool("Audio", "PhotoMuteWorld", PhotoMuteWorld);
-	PhotoMusicEnabled  = ReadBool("Audio", "PhotoMusicEnabled", PhotoMusicEnabled);
-	PhotoMusicEvent    = ReadString("Audio", "PhotoMusicEvent", PhotoMusicEvent.c_str());
-	PhotoMusicStopEvent = ReadString("Audio", "PhotoMusicStopEvent", PhotoMusicStopEvent.c_str());
-
 	OBSEnabled               = ReadBool("OBS", "Enabled", OBSEnabled);
 	OBSAutoRecord            = ReadBool("OBS", "AutoRecord", OBSAutoRecord);
 	OBSHost                  = ReadString("OBS", "Host", OBSHost.c_str());
@@ -185,11 +180,6 @@ void CConfig::Save()
 	WriteFloat("Interface", "LetterboxRatio", LetterboxRatio);
 	WriteInt("Interface", "GridRows", GridRows);
 	WriteInt("Interface", "GridColumns", GridColumns);
-
-	WriteInt("Audio", "PhotoMuteWorld", PhotoMuteWorld ? 1 : 0);
-	WriteInt("Audio", "PhotoMusicEnabled", PhotoMusicEnabled ? 1 : 0);
-	WriteString("Audio", "PhotoMusicEvent", PhotoMusicEvent.c_str());
-	WriteString("Audio", "PhotoMusicStopEvent", PhotoMusicStopEvent.c_str());
 
 	WriteInt("OBS", "Enabled", OBSEnabled ? 1 : 0);
 	WriteInt("OBS", "AutoRecord", OBSAutoRecord ? 1 : 0);

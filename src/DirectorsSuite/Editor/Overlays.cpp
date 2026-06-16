@@ -80,6 +80,21 @@ void COverlays::DrawProjectPlaybackBar()
 // Physical camera markers (p_camerabox01x)
 // ---------------------------------------------------------------------------
 
+namespace {
+	// The p_camerabox01x model's lens faces along its local -Y axis, so applying
+	// the camera rotation verbatim points the lens 180 degrees away from where
+	// the camera is actually looking. Add this yaw offset so the lens faces the
+	// camera's view direction.
+	constexpr float kPropYawOffset = 180.0f;
+
+	Vector3 PropRotationForCamera(const Vector3& camRot)
+	{
+		Vector3 r = camRot;
+		r.z += kPropYawOffset;
+		return r;
+	}
+}
+
 void COverlays::SyncCameraProps()
 {
 	if (m_propModel == 0) {
@@ -112,7 +127,8 @@ void COverlays::SyncCameraProps()
 			ENTITY::FREEZE_ENTITY_POSITION(prop.obj, true);
 			prop.pos = cam->pos;
 			prop.rot = cam->rot;
-			ENTITY::SET_ENTITY_ROTATION(prop.obj, cam->rot.x, cam->rot.y, cam->rot.z, 2, true);
+			Vector3 pr = PropRotationForCamera(cam->rot);
+			ENTITY::SET_ENTITY_ROTATION(prop.obj, pr.x, pr.y, pr.z, 2, true);
 			prop.visible = true;
 		}
 
@@ -122,7 +138,8 @@ void COverlays::SyncCameraProps()
 			prop.pos = cam->pos;
 		}
 		if (prop.rot.x != cam->rot.x || prop.rot.y != cam->rot.y || prop.rot.z != cam->rot.z) {
-			ENTITY::SET_ENTITY_ROTATION(prop.obj, cam->rot.x, cam->rot.y, cam->rot.z, 2, true);
+			Vector3 pr = PropRotationForCamera(cam->rot);
+			ENTITY::SET_ENTITY_ROTATION(prop.obj, pr.x, pr.y, pr.z, 2, true);
 			prop.rot = cam->rot;
 		}
 

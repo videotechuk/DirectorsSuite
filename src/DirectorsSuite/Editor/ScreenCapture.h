@@ -30,9 +30,10 @@ namespace ScreenCapture
 
 	// Kicks off a capture on a worker thread. Returns immediately; the result
 	// is delivered via Poll() so the caller can show an on-screen message.
-	// `hideRequest` is a hook the caller uses to hide its own UI for a frame
-	// before the grab (the duplication sees the whole screen).
-	void RequestCapture();
+	// `cropAspect` is the target width:height for the saved file (e.g. 1.0 for
+	// 1:1, 9.0/16.0 for a phone shot); the grabbed frame is centre-cropped to it
+	// so the chosen aspect ratio is baked into the image. 0 keeps the full frame.
+	void RequestCapture(float cropAspect = 0.0f);
 
 	// Call every frame. Returns true once when a capture finishes, filling
 	// outResult and outPath; returns false otherwise.

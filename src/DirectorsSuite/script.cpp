@@ -39,7 +39,7 @@ static void PollScreenshot()
 				UIUtil::PrintSubtitle("Saved lossless screenshot ~COLOR_BLUE~" + path + "~s~");
 				break;
 			case ScreenCapture::CAP_OK_HDR:
-				UIUtil::PrintSubtitle("Saved ~COLOR_BLUE~HDR~s~ screenshot (.jxr) " + path);
+				UIUtil::PrintSubtitle("Saved ~COLOR_BLUE~HDR~s~ screenshot (.jxr) + PNG copy in Converted HDR Screenshots");
 				break;
 			default:
 				UIUtil::PrintSubtitle("~COLOR_RED~Screenshot failed:~s~ " + ScreenCapture::LastError());
@@ -76,10 +76,11 @@ static void HandleHotkeys()
 		g_PhotoMode.Toggle();
 	}
 
-	// Screenshot works everywhere (gameplay, free cam, photo mode)
+	// Screenshot works everywhere (gameplay, free cam, photo mode). In Photo Mode
+	// with an aspect frame chosen, the saved file is cropped to that ratio.
 	if (g_Config.KeyScreenshot && IsKeyJustUp((DWORD)g_Config.KeyScreenshot)) {
 		if (!ScreenCapture::IsCapturing()) {
-			ScreenCapture::RequestCapture();
+			ScreenCapture::RequestCapture(g_PhotoMode.CurrentCropAspect());
 		}
 	}
 

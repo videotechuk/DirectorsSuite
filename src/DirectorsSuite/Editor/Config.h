@@ -57,15 +57,6 @@ public:
 	int   GridRows = 3;
 	int   GridColumns = 3;
 
-	// [Audio] - Photo Mode ambience swap
-	bool        PhotoMuteWorld = true;       // duck the live world (score + walla) while Photo Mode is open
-	bool        PhotoMusicEnabled = false;   // play a soundtrack bed while Photo Mode is open (OFF by default)
-	// Music event names come from RDR2's own audio data (see femga
-	// rdr3_discoveries/audio/music_events). Default is a calm instrumental
-	// free-roam exploration bed; change PhotoMusicEvent to taste. If a track
-	// sits silent its bank is not loadable from free roam.
-	std::string PhotoMusicEvent = "BOB_ABERDEEN_PIG_FARM_ONESHOT";
-	std::string PhotoMusicStopEvent = "MC_MUSIC_STOP";
 
 	// [OBS] - automatic recording over the obs-websocket 5.x protocol
 	bool        OBSEnabled = false;          // master switch for OBS integration
