@@ -650,7 +650,11 @@ void CPhotoMode::CaptureSuperRes()
 
 	CAM::SET_CAM_ROT(m_cam, rot0.x, rot0.y, rot0.z, 2);
 	CAM::SET_CAM_FOV(m_cam, fov0);
-	if (!m_exposureLocked) GRAPHICS::_0x5CD6A2CCE5087161(FALSE); // restore auto-exposure
+	// The lock above is only ours to hold when the R* render path is actively
+	// keeping exposure pinned (m_enhancedRender + Lock Exposure). Otherwise we
+	// locked it purely for the capture, so release it now or the game's
+	// auto-exposure stays frozen at the capture baseline.
+	if (!(m_enhancedRender && m_exposureLocked)) GRAPHICS::_0x5CD6A2CCE5087161(FALSE); // restore auto-exposure
 	ScreenCapture::EndSequence();
 
 	if (!ok || tw == 0) { UIUtil::PrintSubtitle("~COLOR_RED~Super-res capture failed~s~"); return; }
@@ -719,6 +723,170 @@ void CPhotoMode::CaptureSuperRes()
 		UIUtil::PrintSubtitle("Saved " + std::to_string(Wout) + "x" + std::to_string(Hout) + " to Captured Screenshots");
 	else
 		UIUtil::PrintSubtitle("~COLOR_RED~Super-res stitch/save failed~s~");
+}
+
+// [TEST] 360-degree panorama capture. Keeps the camera POSITION fixed and pans
+// it through a ring of tiles covering the whole sphere (6 yaw columns x 3 pitch
+// rows, overlapping), grabbing one desktop frame per tile. Then every pixel of an
+// equirectangular (2:1) output is reprojected: its longitude/latitude becomes a
+// world ray, and we sample the tile(s) whose frustum cover that ray (inverse
+// mapping + bilinear, centre-weighted feather across overlaps). The result is a
+// single 360 panorama viewable in any equirectangular/360 viewer. Synchronous on
+// the script thread; freeze the world so the scene is static between tiles.
+void CPhotoMode::Capture360()
+{
+	if (m_cam == 0 || !CAM::DOES_CAM_EXIST(m_cam)) {
+		UIUtil::PrintSubtitle("~COLOR_RED~360 capture needs the Photo Mode camera~s~");
+		return;
+	}
+	if (!ScreenCapture::BeginSequence()) {
+		UIUtil::PrintSubtitle("~COLOR_RED~360 capture unavailable~s~");
+		return;
+	}
+	UIUtil::PrintSubtitle("Capturing 360 panorama... hold still");
+
+	const float fov0 = m_fov;
+	const Vector3 rot0 = m_rot;
+	const float aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+	const Vector3 worldUp{ 0.0f, 0.0f, 1.0f };
+
+	auto cross = [](const Vector3& a, const Vector3& b) {
+		return Vector3{ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+	};
+
+	// Level panorama frame centred on the camera's current heading (horizon level
+	// regardless of where the camera was pitched/rolled).
+	const Vector3 fwdLevel = EMath::RotationToDirection(Vector3{ 0.0f, 0.0f, rot0.z });
+	const Vector3 rightLevel = EMath::Normalize(cross(fwdLevel, worldUp));
+
+	// Tile grid: 6 yaw columns x 3 pitch rows at 75-deg vertical FOV. With ~107-deg
+	// horizontal FOV that overlaps generously on every seam and over the poles.
+	const float tileFovV = 75.0f;
+	const float tanHalfV = tanf(tileFovV * 0.5f * EMath::DEG2RAD);
+	const float tanHalfH = tanHalfV * aspect;
+	const int yawCols = 6;
+	const float pitchRows[3] = { -60.0f, 0.0f, 60.0f };
+	const int nTiles = yawCols * 3;
+
+	auto renderTile = [this](const Vector3& rt, float fov, int frames) {
+		for (int i = 0; i < frames; i++) {
+			CAM::_0x3C8F74E8FE751614();
+			CAM::SET_CAM_ROT(m_cam, rt.x, rt.y, rt.z, 2);
+			CAM::SET_CAM_FOV(m_cam, fov);
+			HUD::HIDE_HUD_AND_RADAR_THIS_FRAME();
+			HUD::_HIDE_HUD_THIS_FRAME();
+			UpdatePrompts(false);
+			g_Menu->HidePrompts();
+			WAIT(0);
+		}
+	};
+
+	struct TileCam { Vector3 fwd, right, up; };
+	std::vector<TileCam> cam(nTiles);
+	std::vector<std::vector<unsigned char>> tiles(nTiles);
+	int tw = 0, th = 0;
+	bool ok = true;
+
+	// Lock exposure at the user's framing so every tile shares one exposure - the
+	// main cause of tonal seams. Restored after unless Lock Exposure is on.
+	renderTile(rot0, fov0, 6);
+	GRAPHICS::_0x5CD6A2CCE5087161(TRUE);
+	GRAPHICS::_0x9229ED770975BD9E();
+
+	for (int pr = 0; pr < 3 && ok; pr++) {
+		for (int yc = 0; yc < yawCols && ok; yc++) {
+			int idx = pr * yawCols + yc;
+			float tileYaw = rot0.z + (float)yc * (360.0f / (float)yawCols);
+			Vector3 setRot{ pitchRows[pr], 0.0f, tileYaw };
+
+			Vector3 tf = EMath::RotationToDirection(setRot);
+			Vector3 tr = EMath::Normalize(cross(tf, worldUp));
+			Vector3 tu = cross(tr, tf);
+			cam[idx].fwd = tf; cam[idx].right = tr; cam[idx].up = tu;
+
+			renderTile(setRot, tileFovV, 10);
+
+			int gw = 0, gh = 0;
+			if (!ScreenCapture::GrabFrame(tiles[idx], gw, gh) || gw <= 0 || gh <= 0) { ok = false; break; }
+			if (tw == 0) { tw = gw; th = gh; }
+			if (gw != tw || gh != th) { ok = false; break; }
+		}
+	}
+
+	CAM::SET_CAM_ROT(m_cam, rot0.x, rot0.y, rot0.z, 2);
+	CAM::SET_CAM_FOV(m_cam, fov0);
+	// Only keep exposure locked if the R* render path is actively holding it
+	// (m_enhancedRender + Lock Exposure); otherwise release the lock we took for
+	// the capture so the game's auto-exposure isn't left frozen at the baseline.
+	if (!(m_enhancedRender && m_exposureLocked)) GRAPHICS::_0x5CD6A2CCE5087161(FALSE);
+	ScreenCapture::EndSequence();
+
+	if (!ok || tw == 0) { UIUtil::PrintSubtitle("~COLOR_RED~360 capture failed~s~"); return; }
+
+	// --- Reproject every equirectangular pixel into the tile(s) covering its ray ---
+	const int Wout = 4096, Hout = 2048; // 2:1 equirectangular
+	std::vector<unsigned char> out((size_t)Wout * Hout * 4, 0);
+	const float PI = 3.14159265358979f;
+
+	for (int oy = 0; oy < Hout; oy++) {
+		float lat = (0.5f - ((float)oy + 0.5f) / (float)Hout) * PI; // +pi/2 top .. -pi/2 bottom
+		float clat = cosf(lat), slat = sinf(lat);
+		for (int ox = 0; ox < Wout; ox++) {
+			float lon = (((float)ox + 0.5f) / (float)Wout * 2.0f - 1.0f) * PI; // -pi..pi, 0 = forward
+			Vector3 dir = EMath::Add(EMath::Add(
+				EMath::Scale(fwdLevel, clat * cosf(lon)),
+				EMath::Scale(rightLevel, clat * sinf(lon))),
+				EMath::Scale(worldUp, slat));
+
+			float acc[4] = { 0, 0, 0, 0 };
+			float wsum = 0.0f;
+			for (int t = 0; t < nTiles; t++) {
+				const TileCam& tc = cam[t];
+				float fz = EMath::Dot(dir, tc.fwd);
+				if (fz <= 1e-4f) continue;
+				float tx = (EMath::Dot(dir, tc.right) / fz) / tanHalfH;
+				float ty = (EMath::Dot(dir, tc.up)    / fz) / tanHalfV;
+				float ax = fabsf(tx), ay = fabsf(ty);
+				if (ax >= 1.0f || ay >= 1.0f) continue; // ray not inside this tile
+				float w = (1.0f - ax) * (1.0f - ay);    // centre-weighted feather
+				if (w <= 0.0f) continue;
+
+				const std::vector<unsigned char>& src = tiles[t];
+				float sx = (tx + 1.0f) * 0.5f * tw - 0.5f;
+				float sy = (1.0f - ty) * 0.5f * th - 0.5f;
+				if (sx < 0) sx = 0; else if (sx > tw - 1) sx = (float)(tw - 1);
+				if (sy < 0) sy = 0; else if (sy > th - 1) sy = (float)(th - 1);
+				int x0 = (int)sx, y0 = (int)sy;
+				int x1 = (x0 + 1 < tw) ? x0 + 1 : x0;
+				int y1 = (y0 + 1 < th) ? y0 + 1 : y0;
+				float fx = sx - x0, fy = sy - y0;
+				for (int ch = 0; ch < 4; ch++) {
+					float p00 = src[((size_t)y0 * tw + x0) * 4 + ch];
+					float p10 = src[((size_t)y0 * tw + x1) * 4 + ch];
+					float p01 = src[((size_t)y1 * tw + x0) * 4 + ch];
+					float p11 = src[((size_t)y1 * tw + x1) * 4 + ch];
+					float top = p00 + (p10 - p00) * fx;
+					float bot = p01 + (p11 - p01) * fx;
+					acc[ch] += (top + (bot - top) * fy) * w;
+				}
+				wsum += w;
+			}
+
+			unsigned char* d = &out[((size_t)oy * Wout + ox) * 4];
+			if (wsum > 1e-4f) {
+				for (int ch = 0; ch < 4; ch++) {
+					float v = acc[ch] / wsum + 0.5f;
+					d[ch] = (unsigned char)(v < 0.0f ? 0.0f : (v > 255.0f ? 255.0f : v));
+				}
+			}
+		}
+	}
+
+	std::string path;
+	if (ScreenCapture::SaveBGRAImage(out, Wout, Hout, path))
+		UIUtil::PrintSubtitle("Saved 360 panorama " + std::to_string(Wout) + "x" + std::to_string(Hout) + " to Captured Screenshots");
+	else
+		UIUtil::PrintSubtitle("~COLOR_RED~360 stitch/save failed~s~");
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +983,55 @@ void CPhotoMode::UpdateCamera()
 	}
 	else {
 		STREAMING::CLEAR_FOCUS();
+	}
+
+	// High-detail LOD boost follows the lens each frame (HD bubble re-centred on
+	// the camera; newly streamed peds/vehicles picked up too).
+	if (m_highLod) SetLodBoost(true);
+}
+
+// "Increase LOD (High Detail)": force the streaming system to use the HD (top)
+// map models in a bubble around the lens, scale up ped/vehicle LOD distance so
+// people, animals and wagons stay sharp further out, and max the LOD distance of
+// nearby props so distant scenery objects stay drawn. Radius and multiplier are
+// user-tunable. Heavier on streaming, so it is an opt-in toggle. Passing false
+// restores every default (including each prop's captured original LOD distance).
+void CPhotoMode::SetLodBoost(bool on)
+{
+	if (on) STREAMING::SET_HD_AREA(m_pos.x, m_pos.y, m_pos.z, m_lodRadius);
+	else    STREAMING::CLEAR_HD_AREA();
+
+	const float mult = on ? m_lodMult : 1.0f; // ped/vehicle LOD scale (1 = default)
+	const int ARR = 1024;
+
+	int peds[ARR];
+	int pc = worldGetAllPeds(peds, ARR);
+	for (int i = 0; i < pc; i++)
+		if (ENTITY::DOES_ENTITY_EXIST(peds[i])) PED::SET_PED_LOD_MULTIPLIER(peds[i], mult);
+
+	int vehs[ARR];
+	int vc = worldGetAllVehicles(vehs, ARR);
+	for (int i = 0; i < vc; i++)
+		if (ENTITY::DOES_ENTITY_EXIST(vehs[i])) VEHICLE::SET_VEHICLE_LOD_MULTIPLIER(vehs[i], mult);
+
+	// Props (script objects): max their LOD distance so far scenery props stay
+	// drawn. Capture each one's original the first time it is touched; restore
+	// them all when the boost is turned off.
+	if (on) {
+		int objs[ARR];
+		int oc = worldGetAllObjects(objs, ARR);
+		for (int i = 0; i < oc; i++) {
+			int o = objs[i];
+			if (!ENTITY::DOES_ENTITY_EXIST(o)) continue;
+			if (m_lodSavedObj.find(o) == m_lodSavedObj.end())
+				m_lodSavedObj[o] = ENTITY::GET_ENTITY_LOD_DIST(o);
+			ENTITY::SET_ENTITY_LOD_DIST(o, 0xFFFF);
+		}
+	}
+	else {
+		for (const auto& kv : m_lodSavedObj)
+			if (ENTITY::DOES_ENTITY_EXIST(kv.first)) ENTITY::SET_ENTITY_LOD_DIST(kv.first, kv.second);
+		m_lodSavedObj.clear();
 	}
 }
 
@@ -1385,10 +1602,14 @@ void CPhotoMode::BuildPhotoMenus()
 		sub->AddRegularOption("Lighting Settings", "Scene lights (X/Y/Z), the sun (direction/height), Rockstar & 3-point hero rigs", [this] { RebuildLightingPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Lighting); ShowTabTip(3, "Lighting Settings: position scene lights by X/Y/Z, aim the sun with direction/height, and add the Rockstar or 3-point hero rig. Sculpt mood, highlights and shadows on your subject."); });
 		sub->AddRegularOption("Time & Weather", "Freeze time, set time of day, weather and the moon", [this] { RebuildWorldPage();    g_Menu->GoToSubmenu(Submenu_PhotoMode_World); ShowTabTip(1, "Time & Weather: freeze time, and set the time of day, weather and moon. Lock the exact moment you want to capture."); });
 		sub->AddRegularOption("Character Settings", "Pick a subject, pose, expressions, become a character", [this] { RebuildCharacterPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Character); ShowTabTip(2, "Character Settings: pick any nearby person or animal as your subject, then pose them, set an expression, look at camera, or become a character. Direct who is in frame."); });
-		sub->AddRegularOption("Post Effects", "Color grades, motion blur, letterbox, grid", [this] { RebuildPostPage();     g_Menu->GoToSubmenu(Submenu_PhotoMode_Post); ShowTabTip(4, "Post Effects: apply color grades, motion blur, cinematic letterbox and a grid. Give the shot a cinematic look and clean composition."); });
-		sub->AddRegularOption("Filters", "Photo filters and lossless / HDR screenshots", [this] { RebuildEffectsPage();  g_Menu->GoToSubmenu(Submenu_PhotoMode_Effects); ShowTabTip(5, "Filters: stack authentic photo filters and take a lossless or HDR screenshot - a final stylized pass right before you capture."); });
+		sub->AddRegularOption("Post Effects", "Color grades, filters, R* render path, level of detail, grid", [this] { RebuildPostPage();     g_Menu->GoToSubmenu(Submenu_PhotoMode_Post); ShowTabTip(4, "Post Effects: apply color grades and native photo filters, the R* render path, level-of-detail and a grid. Give the shot a cinematic look and clean composition."); });
 		sub->AddRegularOption("Scene Editor (Beta)", "Place props, direct actors with scenarios, and make temporary world edits", [this] { RebuildScenePage();     g_Menu->GoToSubmenu(Submenu_PhotoMode_Scene); ShowTabTip(6, "Scene Editor: stage a whole scene - place props, spawn and direct actors with scenarios, and make temporary world edits. Build the moment your shot needs."); });
 		sub->AddRegularOption("Captures", "Browse and view your saved screenshots in-game", [this] { RebuildCapturesPage(); g_Menu->GoToSubmenu(Submenu_PhotoMode_Captures); ShowTabTip(9, "Captures: review your shots without leaving the game. Open the gallery, move the highlight with the arrows, Enter opens a shot full-screen, F filters by date, and Backspace closes."); });
+		// Advanced Capture sits just above the quick screenshot action, tinted yellow
+		// to mark it as the experimental / heavy-capture corner (lossless/HDR, super-res, 360).
+		Option* adv = sub->AddRegularOption("Advanced Capture", "Lossless / HDR screenshot, experimental super-resolution and 360 panorama capture", [this] { RebuildEffectsPage();  g_Menu->GoToSubmenu(Submenu_PhotoMode_Effects); ShowTabTip(5, "Advanced Capture: take a lossless or HDR screenshot, and try the experimental super-resolution and 360 panorama captures. Freeze the world first for the multi-tile shots."); });
+		adv->TextR = 255; adv->TextG = 255; adv->TextB = 0; // yellow
+
 		sub->AddRegularOption("Take Screenshot (Lossless/HDR)", "Saves exactly what is on screen. Also bound to F3", [] {
 			if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(g_PhotoMode.CurrentCropAspect()); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); }
 		});
@@ -1440,6 +1661,8 @@ void CPhotoMode::RebuildSettingsPage()
 
 		sub->AddBoolOption("High Detail Streaming", "Stream the world around the camera for full detail anywhere", &g_Config.FreeCamHighDetail);
 
+		sub->AddBoolOption("Hide HUD", "Hide the game HUD while composing", &m_hideHud);
+
 		sub->AddRegularOption("Key Bindings", "Rebind the hotkeys (open menu, Photo Mode, screenshot, cameras...)", [] {
 			g_Menu->AddSubmenu("PHOTO MODE", "Key Bindings", Submenu_PhotoMode_Keys, 12, [](Submenu* s) { KeyBind::BuildInto(s); });
 			g_Menu->GoToSubmenu(Submenu_PhotoMode_Keys);
@@ -1480,10 +1703,13 @@ void CPhotoMode::RebuildCreditsPage()
 
 void CPhotoMode::RebuildCameraPage()
 {
+	sPMFreeze = m_frozen;
 	g_Menu->AddSubmenu("PHOTO MODE", "Composition Settings", Submenu_PhotoMode_Camera, 12, [this](Submenu* sub)
 	{
 		// --- Freeze & framing: shape the moment you're capturing ---
 		sub->AddEmptyOption("- FREEZE METHOD -");
+
+		sub->AddBoolOption("Freeze World", "Halt the whole world; the camera stays free", &sPMFreeze, [this] { SetFrozen(sPMFreeze); });
 
 		sub->AddVectorOption("Freeze Method", "Time Scale keeps your full screen ratio; native freeze crops ultrawide", std::vector<const char*>{ "Time Scale", "Photo Mode Native" }, [this] {
 			bool wasFrozen = m_frozen;
@@ -1598,23 +1824,14 @@ void CPhotoMode::RebuildCameraPage()
 
 void CPhotoMode::RebuildWorldPage()
 {
-	sPMFreeze = m_frozen;
 	g_Menu->AddSubmenu("PHOTO MODE", "Time & Weather", Submenu_PhotoMode_World, 12, [this](Submenu* sub)
 	{
-		sub->AddBoolOption("Freeze World", "Halt the whole world; the camera stays free", &sPMFreeze, [this] { SetFrozen(sPMFreeze); });
-
 		float curTod = (float)CLOCK::GET_CLOCK_HOURS() + (float)CLOCK::GET_CLOCK_MINUTES() / 60.0f;
 		auto tod = PMRange(0.0f, 23.75f, 0.25f, 2);
 		sub->AddVectorOption("Time Of Day", "Drag through the whole day. Golden hour is your friend", tod, [] {
 			float v = PMFromIdx(CurIdx(), 0.0f, 0.25f);
 			CLOCK::SET_CLOCK_TIME((int)v, (int)((v - (int)v) * 60.0f + 0.5f), 0);
 		})->SetVectorIndex(PMIdx(curTod, 0.0f, 0.25f, (int)tod.size()));
-
-		auto moon = PMRange(0.0f, 1.0f, 0.05f, 2);
-		sub->AddVectorOption("Moon Override", "Force the moon cycle for night shots (0 = default)", moon, [this] {
-			m_moonOverride = PMFromIdx(CurIdx(), 0.0f, 0.05f);
-			GRAPHICS::ENABLE_MOON_CYCLE_OVERRIDE(m_moonOverride);
-		})->SetVectorIndex(PMIdx(m_moonOverride, 0.0f, 0.05f, (int)moon.size()));
 
 		// (Sun Azimuth / Sun Elevation moved to the Lighting page.)
 
@@ -1628,10 +1845,6 @@ void CPhotoMode::RebuildWorldPage()
 				MISC::SET_CURR_WEATHER_STATE(m_savedWeather1, m_savedWeather2, m_savedWeatherPct, true);
 			}
 		})->SetVectorIndex(m_weatherIdx);
-
-		sub->AddBoolOption("Hide HUD", "Hide the game HUD while composing", &m_hideHud);
-		sub->AddBoolOption("Invincible Player", "Keep the player unkillable while editing", &m_invincible);
-		sub->AddBoolOption("Cutscene Unlock", "Keep the photo camera free during cutscenes", &m_cutsceneUnlock);
 	});
 }
 
@@ -1665,11 +1878,15 @@ void CPhotoMode::RebuildCharacterPage()
 
 	g_Menu->AddSubmenu("PHOTO MODE", "Character Settings", Submenu_PhotoMode_Character, 11, [this, subjectNames, curSubject](Submenu* sub)
 	{
-		sub->AddVectorOption("Subject", "Cycle nearby characters (a marker floats over them)", subjectNames, [this] {
+		sub->AddEmptyOption("- CHARACTER CHANGER -");
+
+		sub->AddVectorOption("Select Character", "Cycle nearby characters (a marker floats over them)", subjectNames, [this] {
 			int i = CurIdx();
 			m_target = (i >= 0 && i < (int)m_subjectList.size()) ? m_subjectList[i] : 0;
 			m_poseIdx = 0; m_facialIdx = 0; m_poseActive = false; m_targetHidden = false;
 		})->SetVectorIndex(curSubject);
+
+		sub->AddEmptyOption("- EXPRESSION -");
 
 		std::vector<std::string> poseNames; for (const auto& p : PMPoses) poseNames.push_back(p.label);
 		sub->AddVectorOption("Pose", "Poses play while UNFROZEN; freeze once it looks right", poseNames, [this] {
@@ -1689,6 +1906,10 @@ void CPhotoMode::RebuildCharacterPage()
 			if (m_facialIdx > 0) PED::SET_FACIAL_IDLE_ANIM_OVERRIDE(tg, FacialMoods[m_facialIdx], 0);
 			else PED::CLEAR_FACIAL_IDLE_ANIM_OVERRIDE(tg);
 		})->SetVectorIndex(m_facialIdx);
+
+		sub->AddEmptyOption("- CHARACTER SETTINGS -");
+
+		sub->AddBoolOption("Invincible Player", "Keep the player unkillable while editing", &m_invincible);
 
 		sub->AddRegularOption("Look At Camera", "The subject turns to the lens for ~8 seconds", [this] {
 			Ped tg = ResolveTarget();
@@ -1800,6 +2021,8 @@ void CPhotoMode::RebuildLightingPage()
 		Vector3 lp = sel ? sel->pos : Vector3{};
 		Vector3 lr = sel ? sel->rot : Vector3{};
 
+		sub->AddEmptyOption("- LIGHT POSITION -");
+
 		SceneStep::AddStepSelectors(sub);
 
 		SceneStep::AddStepper(sub, "Position X", "World X (left/right adjusts by Move Step)", lp.x, 3, [this](int d) -> float {
@@ -1832,7 +2055,7 @@ void CPhotoMode::RebuildLightingPage()
 
 void CPhotoMode::RebuildPostPage()
 {
-	g_Menu->AddSubmenu("PHOTO MODE", "Post Effects", Submenu_PhotoMode_Post, 10, [this](Submenu* sub)
+	g_Menu->AddSubmenu("PHOTO MODE", "Post Effects", Submenu_PhotoMode_Post, 13, [this](Submenu* sub)
 	{
 		std::vector<std::string> grades; for (const auto& g : PMGrades) grades.push_back(g.label);
 		sub->AddVectorOption("Color Grade", "Real in-game grading looks; includes grain, vignette, lens", grades, [this] {
@@ -1844,56 +2067,9 @@ void CPhotoMode::RebuildPostPage()
 			m_gradeStrength = PMFromIdx(CurIdx(), 0.05f, 0.05f); ApplyGrade();
 		})->SetVectorIndex(PMIdx(m_gradeStrength, 0.05f, 0.05f, (int)strength.size()));
 
-		auto mblur = PMRange(0.0f, 1.0f, 0.05f, 2);
-		sub->AddVectorOption("Motion Blur", "Camera motion blur for movement shots", mblur, [this] {
-			m_motionBlur = PMFromIdx(CurIdx(), 0.0f, 0.05f);
-		})->SetVectorIndex(PMIdx(m_motionBlur, 0.0f, 0.05f, (int)mblur.size()));
+		// === Filters (native Photo Mode filters; stack on top of the color grade) ===
+		sub->AddEmptyOption("- FILTERS -");
 
-		// R*'s photo-mode render path + exposure/contrast trims (see ApplyEnhancedRender).
-		// It only engages under the native Photo Mode freeze, so enabling it
-		// switches the freeze method to it (and freezes) automatically.
-		sub->AddBoolOption("Enhanced Render (R* Quality)", "Extra ambient occlusion + detail. Auto-switches to the Photo Mode freeze it needs. May show 16:9 bars on ultrawide unless the black-bars patch is on", &m_enhancedRender, [this] {
-			if (!m_enhancedRender) return; // turning off: leave the freeze as-is
-			bool wasFrozen = m_frozen;
-			if (wasFrozen) SetFrozen(false);   // release the old freeze method first
-			m_freezeMethod = 1;                // Photo Mode Native
-			sPMFreeze = true;
-			SetFrozen(true);
-			UIUtil::PrintSubtitle("~COLOR_GREEN~Photo Mode freeze engaged for Enhanced Render~s~");
-		});
-
-		// Exposure lock (default ON) holds the photo-mode exposure at its baseline
-		// so Enhanced Render can't blow out. Turn OFF to drive Exposure manually.
-		sub->AddBoolOption("Lock Exposure", "ON keeps Enhanced Render from blowing out (Exposure slider held). OFF lets you set Exposure by hand", &m_exposureLocked, [this] {
-			if (m_exposureLocked) { GRAPHICS::_0x5CD6A2CCE5087161(TRUE); GRAPHICS::_0x9229ED770975BD9E(); }
-			else GRAPHICS::_0x5CD6A2CCE5087161(FALSE);
-		});
-
-		auto expo = PMRange(-1.0f, 1.0f, 0.05f, 2);
-		sub->AddVectorOption("Exposure", "Photo-mode exposure trim (R* native). 0 = scene default", expo, [this] {
-			float v = PMFromIdx(CurIdx(), -1.0f, 0.05f);
-			float d = v - m_exposureApplied;
-			if (d > 0.0001f || d < -0.0001f) { GRAPHICS::_0xC8D0611D9A0CF5D3(PMFloatArg(d)); m_exposureApplied = v; }
-			m_exposure = v;
-		})->SetVectorIndex(PMIdx(m_exposure, -1.0f, 0.05f, (int)expo.size()));
-
-		auto cont = PMRange(-1.0f, 1.0f, 0.05f, 2);
-		sub->AddVectorOption("Contrast", "Photo-mode contrast trim (R* native). 0 = scene default", cont, [this] {
-			float v = PMFromIdx(CurIdx(), -1.0f, 0.05f);
-			float d = v - m_contrastApplied;
-			if (d > 0.0001f || d < -0.0001f) { GRAPHICS::_0x62B9F9A1272AED80(PMFloatArg(d)); m_contrastApplied = v; }
-			m_contrast = v;
-		})->SetVectorIndex(PMIdx(m_contrast, -1.0f, 0.05f, (int)cont.size()));
-
-		sub->AddBoolOption("Engine Letterbox", "The game's own 16:9 cinematic bars (prefer Aspect Frame)", &m_letterbox);
-		sub->AddBoolOption("Composition Grid", "Rule-of-thirds overlay (hidden with the UI)", &m_grid);
-	});
-}
-
-void CPhotoMode::RebuildEffectsPage()
-{
-	g_Menu->AddSubmenu("PHOTO MODE", "Filters", Submenu_PhotoMode_Effects, 10, [this](Submenu* sub)
-	{
 		std::vector<std::string> filters;
 		for (int i = 0; i < (int)PhotoModeFilters.size(); i++) filters.push_back(i == 0 ? "None" : PhotoModeFilters[i]);
 		sub->AddVectorOption("Photo Filter", "All native Photo Mode filters. Stacks with the color grade", filters, [this] {
@@ -1905,6 +2081,118 @@ void CPhotoMode::RebuildEffectsPage()
 			m_filterOpacity = PMFromIdx(CurIdx(), 0.0f, 0.05f); ApplyFilterWithOpacity();
 		})->SetVectorIndex(PMIdx(m_filterOpacity, 0.0f, 0.05f, (int)opacity.size()));
 
+		sub->AddRegularOption("Clear Filter", "Clear the photo filter", [this] { ApplyFilter(0); m_filterIdx = 0; });
+
+		// === Official Photo Mode features (R* native render path + exposure trims) ===
+		sub->AddEmptyOption("- OFFICIAL PHOTO MODE FEATURES -");
+
+		// R*'s photo-mode render path. It only engages under the native Photo Mode
+		// freeze, so enabling it switches the freeze method (and freezes) for you,
+		// and unlocks the Exposure / Contrast trims below.
+		sub->AddBoolOption("R* Photo Mode Features", "Extra ambient occlusion + detail, and unlocks the Exposure / Contrast trims. Auto-switches to the Photo Mode freeze it needs. May show 16:9 bars on ultrawide unless the black-bars patch is on", &m_enhancedRender, [this] {
+			m_postRebuildPending = true;       // re-skin Exposure / Contrast (they depend on this)
+			if (!m_enhancedRender) return;     // turning off: leave the freeze as-is
+			bool wasFrozen = m_frozen;
+			if (wasFrozen) SetFrozen(false);   // release the old freeze method first
+			m_freezeMethod = 1;                // Photo Mode Native
+			sPMFreeze = true;
+			SetFrozen(true);
+			UIUtil::PrintSubtitle("~COLOR_GREEN~Photo Mode freeze engaged for R* Photo Mode Features~s~");
+		});
+
+		// Exposure lock (default ON) holds the photo-mode exposure at its baseline
+		// so the render path can't blow out. Turn OFF to drive Exposure manually.
+		sub->AddBoolOption("Lock Exposure", "ON keeps R* Photo Mode Features from blowing out (Exposure slider held). OFF lets you set Exposure by hand", &m_exposureLocked, [this] {
+			if (m_exposureLocked) { GRAPHICS::_0x5CD6A2CCE5087161(TRUE); GRAPHICS::_0x9229ED770975BD9E(); }
+			else GRAPHICS::_0x5CD6A2CCE5087161(FALSE);
+		});
+
+		// Exposure / Contrast are R* native trims that only do anything under the
+		// render path, so they stay locked (greyed) until R* Photo Mode Features is
+		// on. Each stays one row in both states, so the cursor keeps its place when
+		// the section re-skins on toggle.
+		if (m_enhancedRender) {
+			auto expo = PMRange(-1.0f, 1.0f, 0.05f, 2);
+			sub->AddVectorOption("Exposure", "Photo-mode exposure trim (R* native). 0 = scene default", expo, [this] {
+				float v = PMFromIdx(CurIdx(), -1.0f, 0.05f);
+				float d = v - m_exposureApplied;
+				if (d > 0.0001f || d < -0.0001f) { GRAPHICS::_0xC8D0611D9A0CF5D3(PMFloatArg(d)); m_exposureApplied = v; }
+				m_exposure = v;
+			})->SetVectorIndex(PMIdx(m_exposure, -1.0f, 0.05f, (int)expo.size()));
+
+			auto cont = PMRange(-1.0f, 1.0f, 0.05f, 2);
+			sub->AddVectorOption("Contrast", "Photo-mode contrast trim (R* native). 0 = scene default", cont, [this] {
+				float v = PMFromIdx(CurIdx(), -1.0f, 0.05f);
+				float d = v - m_contrastApplied;
+				if (d > 0.0001f || d < -0.0001f) { GRAPHICS::_0x62B9F9A1272AED80(PMFloatArg(d)); m_contrastApplied = v; }
+				m_contrast = v;
+			})->SetVectorIndex(PMIdx(m_contrast, -1.0f, 0.05f, (int)cont.size()));
+		}
+		else {
+			auto fmt2 = [](float v) {
+				int hc = (int)((v < 0 ? -v : v) * 100.0f + 0.5f);
+				std::string s = (v < 0 ? "-" : "") + std::to_string(hc / 100) + ".";
+				int frac = hc % 100; return s + (frac < 10 ? "0" : "") + std::to_string(frac);
+			};
+			auto locked = [this, sub](const std::string& label, const std::string& value) {
+				Option* o = sub->AddRegularOption(label + "   [ " + value + " ]",
+					"Enable R* Photo Mode Features to use the exposure / contrast trims", [this] {
+						UIUtil::PrintSubtitle("~COLOR_YELLOW~Exposure & Contrast need R* Photo Mode Features~s~ - enable it first.");
+					});
+				o->TextR = 120; o->TextG = 120; o->TextB = 120; // greyed = disabled
+			};
+			locked("Exposure", fmt2(m_exposure));
+			locked("Contrast", fmt2(m_contrast));
+		}
+
+		// === Level of detail ===
+		sub->AddEmptyOption("- LEVEL OF DETAIL (LOD) -");
+
+		sub->AddBoolOption("Increase Level of Detail", "Forces high-detail world models around the lens and keeps people, animals and wagons sharp further out. Heavier on streaming - best for static hero shots", &m_highLod, [this] {
+			m_postRebuildPending = true;        // re-skin the LOD Radius / Multiplier sliders
+			if (!m_highLod) SetLodBoost(false); // turning off restores defaults; on is applied each frame
+			else UIUtil::PrintSubtitle("~COLOR_GREEN~High-detail LOD on~s~ - give the area a second to stream in");
+		});
+
+		// LOD Radius / Multiplier only matter while LOD is on, so they stay locked
+		// (greyed) until Increase Level of Detail is enabled. One row either way.
+		if (m_highLod) {
+			auto lodr = PMRange(50.0f, 500.0f, 25.0f, 0);
+			sub->AddVectorOption("LOD Radius", "High-detail bubble radius around the lens, in metres. Larger pulls in more detail but streams heavier", lodr, [this] {
+				m_lodRadius = PMFromIdx(CurIdx(), 50.0f, 25.0f);
+			})->SetVectorIndex(PMIdx(m_lodRadius, 50.0f, 25.0f, (int)lodr.size()));
+
+			auto lodm = PMRange(1.0f, 10.0f, 0.5f, 1);
+			sub->AddVectorOption("LOD Detail Multiplier", "How much further people, animals and wagons keep full detail (1 = default)", lodm, [this] {
+				m_lodMult = PMFromIdx(CurIdx(), 1.0f, 0.5f);
+			})->SetVectorIndex(PMIdx(m_lodMult, 1.0f, 0.5f, (int)lodm.size()));
+		}
+		else {
+			auto oneDp = [](float v) {
+				int t = (int)(v * 10.0f + 0.5f);
+				return std::to_string(t / 10) + "." + std::to_string(t % 10);
+			};
+			auto locked = [this, sub](const std::string& label, const std::string& value) {
+				Option* o = sub->AddRegularOption(label + "   [ " + value + " ]",
+					"Turn on Increase Level of Detail to adjust", [this] {
+						UIUtil::PrintSubtitle("~COLOR_YELLOW~LOD sliders need Increase Level of Detail~s~ - enable it first.");
+					});
+				o->TextR = 120; o->TextG = 120; o->TextB = 120; // greyed = disabled
+			};
+			locked("LOD Radius", std::to_string((int)(m_lodRadius + 0.5f)));
+			locked("LOD Detail Multiplier", oneDp(m_lodMult));
+		}
+
+		// === Other ===
+		sub->AddEmptyOption("- OTHER FEATURES -");
+		sub->AddBoolOption("Composition Grid", "Rule-of-thirds overlay (hidden with the UI)", &m_grid);
+	});
+}
+
+void CPhotoMode::RebuildEffectsPage()
+{
+	g_Menu->AddSubmenu("PHOTO MODE", "Advanced Capture", Submenu_PhotoMode_Effects, 10, [this](Submenu* sub)
+	{
 		sub->AddRegularOption("Take Screenshot (Lossless/HDR)", "Saves an uncompressed PNG (or .jxr in HDR). Also F3", [] {
 			if (!ScreenCapture::IsCapturing()) { ScreenCapture::RequestCapture(g_PhotoMode.CurrentCropAspect()); PhotoAudio::Play(PhotoAudio::PM_SHUTTER); UIUtil::PrintSubtitle("Capturing... saved to Captured Screenshots"); }
 		});
@@ -1912,11 +2200,13 @@ void CPhotoMode::RebuildEffectsPage()
 		sub->AddVectorOption("Super-Res Factor", "Tile grid for the experimental high-resolution capture (output = factor x your screen)", std::vector<const char*>{ "2x", "3x" }, [this] {
 			m_superResFactor = CurIdx() + 2;
 		})->SetVectorIndex(m_superResFactor - 2);
-		sub->AddRegularOption("~COLOR_YELLOW~Super-Resolution Capture (Test)~s~", "Experimental: pans a zoomed camera over a grid and reprojects the tiles into one large seamless PNG. Freeze the world first; takes a moment", [this] {
+		sub->AddRegularOption("~COLOR_YELLOW~Super-Resolution Capture~s~", "Experimental: pans a zoomed camera over a grid and reprojects the tiles into one large seamless PNG. Freeze the world first; takes a moment", [this] {
 			CaptureSuperRes();
 		});
+		sub->AddRegularOption("~COLOR_YELLOW~360 Panorama Capture~s~", "Experimental: spins the camera around to grab the whole sphere and stitches it into a 4096x2048 equirectangular 360 image. Freeze the world first; takes a few seconds", [this] {
+			Capture360();
+		});
 
-		sub->AddRegularOption("Clear Filter", "Clear the photo filter", [this] { ApplyFilter(0); m_filterIdx = 0; });
 		sub->AddRegularOption("Reset Everything", "Back to a clean slate: no grade, filter, DOF, roll or lights", [this] {
 			ApplyFilter(0); m_filterIdx = 0; m_gradeIdx = 0; ApplyGrade();
 			m_motionBlur = 0.0f; m_letterbox = false; m_grid = false;
@@ -1978,6 +2268,17 @@ void CPhotoMode::HandleInput()
 	// filter, Backspace closes. Single image: Left/Right browse, Enter/Backspace
 	// return to the grid. (The worker resolves each intent by current view.)
 	if (CaptureGallery::IsOpen()) {
+		if (CaptureGallery::IsLooking360()) {
+			// Held arrows pan the 360 view smoothly; the rest are discrete.
+			if (IsKeyDown(VK_LEFT))     CaptureGallery::NavLeft();
+			if (IsKeyDown(VK_RIGHT))    CaptureGallery::NavRight();
+			if (IsKeyDown(VK_UP))       CaptureGallery::NavUp();
+			if (IsKeyDown(VK_DOWN))     CaptureGallery::NavDown();
+			if (IsKeyJustUp(VK_RETURN)) CaptureGallery::Activate();   // back to flat
+			if (IsKeyJustUp(VK_BACK))   CaptureGallery::Back();       // back to grid
+			if (IsKeyJustUp('F'))       CaptureGallery::CycleFilter(); // recenter
+			return;
+		}
 		if (IsKeyJustUp(VK_LEFT))   CaptureGallery::NavLeft();
 		if (IsKeyJustUp(VK_RIGHT))  CaptureGallery::NavRight();
 		if (IsKeyJustUp(VK_UP))     CaptureGallery::NavUp();
@@ -2127,7 +2428,6 @@ void CPhotoMode::Activate()
 	m_savedDay = CLOCK::GET_CLOCK_DAY_OF_MONTH();
 	m_savedMonth = CLOCK::GET_CLOCK_MONTH();
 	m_savedYear = CLOCK::GET_CLOCK_YEAR();
-	m_moonOverride = 0.0f;
 
 	// Timecycle runtime MUST be probed before the World page is built - the Sun
 	// Azimuth/Elevation rows only appear when the sun vars resolved. (Graceful
@@ -2164,6 +2464,8 @@ void CPhotoMode::Activate()
 	// Enhanced render + exposure/contrast trims start clean each session.
 	m_enhancedRender = false;
 	m_enhancedApplied = false;
+	m_highLod = false; // High Detail LOD starts off each session
+	m_lodRadius = 200.0f; m_lodMult = 5.0f; m_lodSavedObj.clear();
 	m_exposureLocked = true;
 	m_exposure = m_contrast = 0.0f;
 	m_exposureApplied = m_contrastApplied = 0.0f;
@@ -2288,19 +2590,18 @@ void CPhotoMode::Deactivate()
 	}
 	m_exposure = m_contrast = 0.0f;
 
+	// Drop the HD area + restore ped/vehicle LOD multipliers to default.
+	if (m_highLod) { SetLodBoost(false); m_highLod = false; }
+
 	STREAMING::CLEAR_FOCUS();
 
 	// undo all live timecycle edits before clearing the modifier slot
 	TimecycleRT::RestoreAllEdits();
 
-	// put the calendar and moon back the way we found them
+	// put the calendar back the way we found it
 	if (m_savedDay > 0) {
 		CLOCK::SET_CLOCK_DATE(m_savedDay, m_savedMonth, m_savedYear);
 		m_savedDay = -1;
-	}
-	if (m_moonOverride > 0.0f) {
-		GRAPHICS::ENABLE_MOON_CYCLE_OVERRIDE(0.0f);
-		m_moonOverride = 0.0f;
 	}
 
 	// Scene Editor: delete every placed object and undo all temporary YMAP
@@ -2359,16 +2660,6 @@ void CPhotoMode::Tick()
 	// them off and use our self-drawn control hint bar (DrawControlHints) instead.
 	UpdatePrompts(false);
 
-	// Cutscene unlock: re-assert our script camera so cutscenes / anim scenes
-	// can't yank control away from the photo editor.
-	if (m_cutsceneUnlock) {
-		CAM::_DISABLE_CINEMATIC_MODE_THIS_FRAME();
-		if (m_cam != 0 && CAM::DOES_CAM_EXIST(m_cam) && !CAM::IS_CAM_RENDERING(m_cam)) {
-			CAM::SET_CAM_ACTIVE(m_cam, true);
-			CAM::RENDER_SCRIPT_CAMS(true, false, 0, true, false, 0);
-		}
-	}
-
 	HandleInput();
 	if (!m_active) return; // an option (Exit Photo Mode / back at root) closed us
 
@@ -2383,6 +2674,9 @@ void CPhotoMode::Tick()
 	// Re-skin the Composition page when Depth of Field toggles its lens lock.
 	// Same deferral reason; the row count is unchanged so the cursor stays put.
 	if (m_compRebuildPending) { m_compRebuildPending = false; RebuildCameraPage(); }
+
+	// Re-skin the Post page when R* Photo Mode Features toggles Exposure/Contrast.
+	if (m_postRebuildPending) { m_postRebuildPending = false; RebuildPostPage(); }
 
 	UpdateCamera();
 	UpdateWorld();

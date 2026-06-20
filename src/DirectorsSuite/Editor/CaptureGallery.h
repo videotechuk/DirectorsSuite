@@ -41,6 +41,10 @@ namespace CaptureGallery
 	void Close();
 	bool IsOpen();
 
+	// True while looking around a 360 panorama in the single view - the caller
+	// drives continuous (held-key) panning instead of discrete navigation.
+	bool IsLooking360();
+
 	// Navigation intents. Meaning depends on the current view (grid vs single
 	// image) and is resolved on the worker thread:
 	//   Grid   - arrows move the highlight, Activate opens the selected shot,

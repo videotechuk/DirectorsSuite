@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <unordered_map>
 #include "..\..\..\inc\types.h"
 #include "DirectorTypes.h"   // HeroLightSetup (Rockstar light rigs)
 
@@ -98,6 +99,7 @@ private:
 	// across an NxN grid, grab each tile and stitch into one large PNG.
 	int  m_superResFactor = 2;   // 2 = 2x2 ... output = factor x screen size
 	void CaptureSuperRes();
+	void Capture360();           // [TEST] equirectangular 360 panorama capture
 
 	// --- camera ---
 	Cam m_cam = 0;
@@ -115,7 +117,6 @@ private:
 	int  m_stepFrames = 0;       // frame-forward pulse counter
 	int  m_weatherIdx = 0;
 	bool m_hideHud = true;
-	bool m_cutsceneUnlock = false; // free the camera + controls during cutscenes
 	bool m_invincible = true;      // keep the player unkillable while editing
 
 	// Weather snapshot so "No Change" truly restores the scene's weather
@@ -130,7 +131,6 @@ private:
 	// height/declination - winter = low raking light, summer = high). These
 	// two give real, native control. The original date is restored on exit.
 	int  m_savedDay = -1, m_savedMonth = -1, m_savedYear = -1;
-	float m_moonOverride = 0.0f; // ENABLE_MOON_CYCLE_OVERRIDE strength
 
 	// Timecycle runtime access (ported RedM editor internals): discovered
 	// sun-direction variable indices used by the Sun Azimuth/Elevation sliders.
@@ -230,6 +230,7 @@ private:
 	bool  m_dofApplied = false;  // the DOF param block is currently active on the cam
 	bool  m_dofLockActive = false;     // Composition page built with the lens locked (DoF on)
 	bool  m_compRebuildPending = false;// re-skin the Composition page after a DoF on/off transition
+	bool  m_postRebuildPending = false;// re-skin the Post page after an R* Photo Mode Features toggle
 
 	// --- post ---
 	int   m_gradeIdx = 0;
@@ -250,6 +251,10 @@ private:
 	// undo the accumulated trim on exit.
 	bool  m_enhancedRender = false;   // R* photo render path (more AO / detail)
 	bool  m_enhancedApplied = false;  // currently asserted in the engine
+	bool  m_highLod = false;          // force HD map models + boost ped/vehicle LOD around the lens
+	float m_lodRadius = 200.0f;       // HD-area bubble radius around the lens (metres)
+	float m_lodMult = 5.0f;           // ped/vehicle LOD-distance multiplier (1 = default)
+	std::unordered_map<int, int> m_lodSavedObj; // prop -> original LOD dist, for clean restore
 	bool  m_exposureLocked = true;    // hold exposure at baseline so the render path can't blow out
 	float m_exposure = 0.0f;          // exposure trim target (relative)
 	float m_contrast = 0.0f;          // contrast trim target (relative)
@@ -302,6 +307,7 @@ private:
 	void UpdateLights();
 	void UpdateCharacterVisibility();
 	void ApplyDof();
+	void SetLodBoost(bool on); // force HD area + ped/vehicle LOD multipliers (High Detail option)
 	void ApplyGrade();
 	void ApplyFilter(int newIdx);
 	int  m_activeFilterIdx = 0;
