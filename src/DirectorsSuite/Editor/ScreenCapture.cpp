@@ -1,4 +1,5 @@
 #include "ScreenCapture.h"
+#include "HdrTonemap.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_5.h>
@@ -79,53 +80,10 @@ namespace
 		return (dot == std::string::npos) ? name : name.substr(0, dot);
 	}
 
-	// IEEE-754 half (binary16) -> float, for the R16G16B16A16_FLOAT HDR buffer.
-	inline float HalfToFloat(unsigned short h)
-	{
-		unsigned int sign = (h >> 15) & 1u;
-		unsigned int exp = (h >> 10) & 0x1Fu;
-		unsigned int mant = h & 0x3FFu;
-		unsigned int f;
-		if (exp == 0) {
-			if (mant == 0) f = sign << 31;
-			else {
-				exp = 127 - 15 + 1;
-				while ((mant & 0x400u) == 0) { mant <<= 1; exp--; }
-				mant &= 0x3FFu;
-				f = (sign << 31) | (exp << 23) | (mant << 13);
-			}
-		}
-		else if (exp == 0x1Fu) f = (sign << 31) | (0xFFu << 23) | (mant << 13);
-		else f = (sign << 31) | ((exp - 15 + 127) << 23) | (mant << 13);
-		float out; memcpy(&out, &f, 4); return out;
-	}
-
-	// Linear -> display sRGB OETF (gamma). The tone map below works in linear and
-	// hands display-ready [0,1] values here for 8-bit quantisation.
-	inline float SrgbEncode(float c)
-	{
-		if (c < 0.0f) c = 0.0f; if (c > 1.0f) c = 1.0f;
-		return c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
-	}
-
-	inline float Luma(float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; }
-
-	inline BYTE To8(float c) { int v = (int)(c * 255.0f + 0.5f); return v < 0 ? 0 : (v > 255 ? 255 : (BYTE)v); }
-
 	// Tonemap the HDR float frame (cropped to the same rect as the .jxr) to an
 	// SDR PNG in "Converted HDR Screenshots". Best-effort: the .jxr is the primary
-	// artifact, so a failure here never fails the capture.
-	//
-	// The duplication buffer is scRGB (linear, 1.0 = 80 nits) and carries ABSOLUTE
-	// luminance, so we must NOT auto-expose: scene-adaptive exposure normalises
-	// every shot to the same brightness and lifts night scenes to look like day.
-	// Instead map a fixed reference paper-white to display white (so day stays
-	// bright, night stays dark - matching how Windows tonemaps the .jxr), then
-	// roll off highlights with an extended Reinhard curve and apply sRGB gamma.
-	//
-	// kPaperWhiteNits is the one knob: it is the HDR white level the shot was
-	// produced at (RDR2's in-game paper white, ~200 nits by default). Raise it if
-	// shots come out too bright, lower it if too dark.
+	// artifact, so a failure here never fails the capture. The fixed-exposure
+	// scRGB->sRGB math lives in HdrTonemap.h so the captures viewer matches.
 	void SaveHdrAsPng(IWICImagingFactory* factory, const D3D11_MAPPED_SUBRESOURCE& map,
 		UINT cropX, UINT cropY, UINT cropW, UINT cropH, const std::string& jxrPath)
 	{
@@ -136,30 +94,14 @@ namespace
 			return reinterpret_cast<const unsigned short*>(base + (size_t)(cropY + y) * map.RowPitch) + (size_t)cropX * 4;
 		};
 
-		// Fixed exposure: scRGB 1.0 == 80 nits, so dividing by (paperWhite/80)
-		// puts reference white at display 1.0 and keeps absolute brightness.
-		const float kPaperWhiteNits = 200.0f;
-		const float exposure = 80.0f / kPaperWhiteNits;
-
-		// Expose, compress highlights on luminance (preserving colour ratios),
-		// gamma-encode.
-		const float Lw = 4.0f;            // white point: ~4x reference white rolls to display white
-		const float Lw2 = Lw * Lw;
 		std::vector<BYTE> bgra((size_t)cropW * cropH * 4);
 		for (UINT y = 0; y < cropH; ++y) {
 			const unsigned short* src = RowAt(y);
 			BYTE* dst = bgra.data() + (size_t)y * cropW * 4;
 			for (UINT x = 0; x < cropW; ++x) {
-				float r = HalfToFloat(src[0]) * exposure; if (r < 0.0f) r = 0.0f;
-				float g = HalfToFloat(src[1]) * exposure; if (g < 0.0f) g = 0.0f;
-				float b = HalfToFloat(src[2]) * exposure; if (b < 0.0f) b = 0.0f;
-				float lum = Luma(r, g, b);
-				float tl = lum * (1.0f + lum / Lw2) / (1.0f + lum); // extended Reinhard
-				float ratio = (lum > 1e-6f) ? (tl / lum) : 0.0f;
-				if (ratio > 2.0f) ratio = 2.0f;                    // guard against oversaturation
-				dst[0] = To8(SrgbEncode(b * ratio)); // B
-				dst[1] = To8(SrgbEncode(g * ratio)); // G
-				dst[2] = To8(SrgbEncode(r * ratio)); // R
+				HdrTonemap::ScrgbToBgr8(HdrTonemap::HalfToFloat(src[0]),
+					HdrTonemap::HalfToFloat(src[1]), HdrTonemap::HalfToFloat(src[2]),
+					dst[0], dst[1], dst[2]);
 				dst[3] = 255;
 				src += 4; dst += 4;
 			}

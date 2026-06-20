@@ -59,10 +59,8 @@ struct HeroLightSetup
 // Names are the anim-scene paths with the .yas extension dropped.
 inline const std::vector<const char*> HeroLightRigs = {
 	// Catalogue / journal / character
+	"lightrig@player_journal",             // first option
 	"lightrig@catalogue_generic",         // the shop catalogue character rig
-	"lightrig@player_journal",
-	"lightrig@online_character_editor",
-	"lightrig@online_free_roam_lobby",
 	// Card & table games (clean, even key/fill)
 	"lightrig@blackjack_generic",
 	"lightrig@dominoes_generic",
@@ -80,15 +78,6 @@ inline const std::vector<const char*> HeroLightRigs = {
 	"lightrig@shops@butcher_generic",
 	"lightrig@shops@trapper_generic",
 	"lightrig@wardrobe@wardrobe_camp_generic",
-	// Misc & mission rigs (dramatic fire / shootout fill)
-	"lightrig@misc@discoverable_circus_wagon",
-	"lightrig@mission@braithwaites2_field_fire",
-	"lightrig@mission@braithwaites2_field_fire_nofade",
-	"lightrig@mission@industry3_shootout",
-	"lightrig@mission@mp_shadybelle_assault",
-	"lightrig@mission@native1_cor_derrick_fire",
-	"lightrig@mission@rxcf1_explosives_fill_light",
-	"lightrig@mission@train_robbery1_shootout",
 };
 
 // ---------------------------------------------------------------------------

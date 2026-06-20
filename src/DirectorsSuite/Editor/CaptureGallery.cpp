@@ -1,5 +1,6 @@
 #include "CaptureGallery.h"
 #include "ScreenCapture.h"   // OutputDir()
+#include "HdrTonemap.h"
 #include <windows.h>
 #include <wincodec.h>
 #include <shellapi.h>
@@ -12,6 +13,7 @@
 #include <cctype>
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "shell32.lib")
@@ -46,6 +48,10 @@ namespace
 		int   mode = GRID;
 		bool  visible = false;
 		std::vector<int> cmds;            // queued intents, drained by the worker
+		// 360 panorama look-around (single view of an equirectangular image)
+		bool  look360 = false;            // panning the current 360 image
+		bool  cur360 = false;             // current single image is equirectangular (set by worker)
+		float yaw360 = 0.0f, pitch360 = 0.0f, fov360 = 90.0f;
 	};
 	State s;
 
@@ -72,9 +78,21 @@ namespace
 	UINT              g_fullW = 0, g_fullH = 0;
 	bool              g_fullOk = false;
 
+	// Hi-res equirectangular source for the 360 look-around view (worker only).
+	std::string       g_panoPath;
+	std::vector<BYTE> g_pano;
+	UINT              g_panoW = 0, g_panoH = 0;
+	bool              g_panoOk = false;
+
 	// Thumbnail cache for the grid (worker thread only), keyed by file path.
 	struct Thumb { std::vector<BYTE> px; UINT w = 0, h = 0, boxW = 0, boxH = 0; bool ok = false; };
 	std::map<std::string, Thumb> g_thumbs;
+
+	// A 2:1 image is treated as a 360 equirectangular panorama.
+	bool IsEquirect(UINT w, UINT h)
+	{
+		return h > 0 && fabs((double)w / (double)h - 2.0) < 0.06;
+	}
 
 	const COLORREF kAccent = RGB(255, 200, 90);
 
@@ -243,6 +261,71 @@ namespace
 		FillRect32(x + w - t, y, t, h, b, g, r, 255);
 	}
 
+	bool IsHdr(const std::string& name)
+	{
+		size_t n = name.size();
+		return n >= 4 && _stricmp(name.c_str() + n - 4, ".jxr") == 0;
+	}
+
+	// HSV (h in [0,360), s,v in [0,1]) -> RGB bytes.
+	void HsvToRgb(float h, float s, float v, BYTE& R, BYTE& G, BYTE& B)
+	{
+		float c = v * s;
+		float hp = h / 60.0f;
+		float xx = c * (1.0f - fabsf(fmodf(hp, 2.0f) - 1.0f));
+		float r = 0, g = 0, b = 0;
+		if (hp < 1) { r = c; g = xx; }
+		else if (hp < 2) { r = xx; g = c; }
+		else if (hp < 3) { g = c; b = xx; }
+		else if (hp < 4) { g = xx; b = c; }
+		else if (hp < 5) { r = xx; b = c; }
+		else { r = c; b = xx; }
+		float m = v - c;
+		R = (BYTE)((r + m) * 255.0f + 0.5f);
+		G = (BYTE)((g + m) * 255.0f + 0.5f);
+		B = (BYTE)((b + m) * 255.0f + 0.5f);
+	}
+
+	// Badge with BOLD text filled by a horizontal rainbow gradient (e.g. "HDR").
+	// GDI can't gradient-fill glyphs, so we draw the text white (grayscale AA) on
+	// a dark chip, then recolour each pixel by its coverage with a hue ramp.
+	void DrawBadge(int x, int y, int w, int h, const std::string& text, int fontPx)
+	{
+		const BYTE bg = 16;
+		FillRect32(x, y, w, h, bg, bg, bg, 255);
+
+		HFONT font = CreateFontA(-fontPx, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+			DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+			DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+		HGDIOBJ old = SelectObject(g_memDC, font);
+		SetBkMode(g_memDC, TRANSPARENT);
+		SetTextColor(g_memDC, RGB(255, 255, 255));
+		RECT rc{ x, y, x + w, y + h };
+		DrawTextA(g_memDC, text.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		GdiFlush();
+		SelectObject(g_memDC, old);
+		DeleteObject(font);
+
+		BYTE* p = static_cast<BYTE*>(g_bits);
+		float denom = (float)((w > 1) ? (w - 1) : 1);
+		for (int yy = y; yy < y + h; ++yy) {
+			if (yy < 0 || yy >= g_surfH) continue;
+			for (int xx = x; xx < x + w; ++xx) {
+				if (xx < 0 || xx >= g_surfW) continue;
+				BYTE* px = p + ((size_t)yy * g_surfW + xx) * 4;
+				int lum = (px[0] + px[1] + px[2]) / 3;   // dark bg ~16, white glyph up to 255
+				int cov = lum - bg; if (cov <= 0) continue;
+				float coverage = (float)cov / (float)(255 - bg); if (coverage > 1.0f) coverage = 1.0f;
+				BYTE R, G, B; HsvToRgb(((float)(xx - x) / denom) * 300.0f, 1.0f, 1.0f, R, G, B);
+				px[0] = (BYTE)(bg * (1.0f - coverage) + B * coverage); // B
+				px[1] = (BYTE)(bg * (1.0f - coverage) + G * coverage); // G
+				px[2] = (BYTE)(bg * (1.0f - coverage) + R * coverage); // R
+				px[3] = 255;
+			}
+		}
+		DrawBorder(x, y, w, h, 1, RGB(0, 0, 0));
+	}
+
 	bool DecodeScaled(const std::wstring& path, UINT boxW, UINT boxH,
 		std::vector<BYTE>& out, UINT& outW, UINT& outH)
 	{
@@ -267,11 +350,31 @@ namespace
 			if (FAILED(g_wic->CreateBitmapScaler(&scl))) break;
 			if (FAILED(scl->Initialize(frm, tw, th, WICBitmapInterpolationModeFant))) break;
 			if (FAILED(g_wic->CreateFormatConverter(&cvt))) break;
-			if (FAILED(cvt->Initialize(scl, GUID_WICPixelFormat32bppPBGRA,
-				WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) break;
 
-			out.resize((size_t)tw * th * 4);
-			if (FAILED(cvt->CopyPixels(nullptr, tw * 4, (UINT)out.size(), out.data()))) break;
+			// HDR (.jxr) is scRGB float - the generic 8-bit conversion clamps and
+			// skips gamma, so it would read far too dark. Decode it to float and run
+			// the same tonemap as the PNG export so the preview matches the file.
+			bool isHdr = path.size() >= 4 &&
+				(_wcsicmp(path.c_str() + path.size() - 4, L".jxr") == 0);
+
+			if (isHdr) {
+				if (FAILED(cvt->Initialize(scl, GUID_WICPixelFormat128bppRGBAFloat,
+					WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) break;
+				std::vector<float> f((size_t)tw * th * 4);
+				if (FAILED(cvt->CopyPixels(nullptr, tw * 16, (UINT)(f.size() * sizeof(float)), (BYTE*)f.data()))) break;
+				out.resize((size_t)tw * th * 4);
+				for (size_t i = 0, n = (size_t)tw * th; i < n; ++i) {
+					HdrTonemap::ScrgbToBgr8(f[i * 4 + 0], f[i * 4 + 1], f[i * 4 + 2],
+						out[i * 4 + 0], out[i * 4 + 1], out[i * 4 + 2]); // B,G,R
+					out[i * 4 + 3] = 255;
+				}
+			}
+			else {
+				if (FAILED(cvt->Initialize(scl, GUID_WICPixelFormat32bppPBGRA,
+					WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) break;
+				out.resize((size_t)tw * th * 4);
+				if (FAILED(cvt->CopyPixels(nullptr, tw * 4, (UINT)out.size(), out.data()))) break;
+			}
 			outW = tw; outH = th; ok = true;
 		} while (false);
 		SafeRelease(cvt); SafeRelease(scl); SafeRelease(frm); SafeRelease(dec);
@@ -306,6 +409,65 @@ namespace
 		return g_thumbs[path];
 	}
 
+	// Reproject the equirectangular g_pano into the [0,W]x[0,areaH] image area as a
+	// perspective view looking at (yaw, pitch) with vertical 'fov'. For each output
+	// pixel we build a view ray, rotate it by pitch (X) then yaw (Y), convert the
+	// world ray to longitude/latitude, and bilinear-sample the panorama (u wraps).
+	void Reproject360(int W, int areaH, float yawDeg, float pitchDeg, float fovDeg)
+	{
+		if (!g_panoOk || g_panoW == 0 || g_panoH == 0 || W <= 0 || areaH <= 0) return;
+		const float PI = 3.14159265358979f, D2R = PI / 180.0f;
+		const float tanV = tanf(fovDeg * 0.5f * D2R);
+		const float tanH = tanV * ((float)W / (float)areaH);
+		const float cp = cosf(pitchDeg * D2R), sp = sinf(pitchDeg * D2R);
+		const float cy = cosf(yawDeg * D2R), sy = sinf(yawDeg * D2R);
+		const int pw = (int)g_panoW, ph = (int)g_panoH;
+		const BYTE* pano = g_pano.data();
+		BYTE* dst = static_cast<BYTE*>(g_bits);
+
+		for (int py = 0; py < areaH; ++py) {
+			float vy = (1.0f - 2.0f * ((float)py + 0.5f) / (float)areaH) * tanV; // +1 top
+			BYTE* drow = dst + (size_t)py * g_surfW * 4;
+			for (int px = 0; px < W; ++px) {
+				float vx = (2.0f * ((float)px + 0.5f) / (float)W - 1.0f) * tanH;
+				// pitch about X, then yaw about Y (view forward = +Z)
+				float ry = vy * cp + 1.0f * sp;
+				float rz = -vy * sp + 1.0f * cp;
+				float rxw = vx * cy + rz * sy;
+				float rzw = -vx * sy + rz * cy;
+				float ryw = ry;
+				float len = sqrtf(rxw * rxw + ryw * ryw + rzw * rzw);
+				float inv = (len > 1e-6f) ? 1.0f / len : 0.0f;
+				float ny = ryw * inv;
+				float lon = atan2f(rxw, rzw);                 // -pi..pi
+				float lat = asinf(ny < -1.f ? -1.f : (ny > 1.f ? 1.f : ny));
+				float u = 0.5f + lon / (2.0f * PI);
+				float v = 0.5f - lat / PI;
+				u -= floorf(u);                                // wrap horizontally
+				if (v < 0) v = 0; else if (v > 1) v = 1;
+
+				float sxf = u * pw - 0.5f, syf = v * ph - 0.5f;
+				int x0 = (int)floorf(sxf), y0 = (int)floorf(syf);
+				float fx = sxf - x0, fyy = syf - y0;
+				int x0w = ((x0 % pw) + pw) % pw, x1w = (x0w + 1) % pw;
+				int y0c = y0 < 0 ? 0 : (y0 >= ph ? ph - 1 : y0);
+				int y1c = (y0c + 1 < ph) ? y0c + 1 : y0c;
+				const BYTE* p00 = pano + ((size_t)y0c * pw + x0w) * 4;
+				const BYTE* p10 = pano + ((size_t)y0c * pw + x1w) * 4;
+				const BYTE* p01 = pano + ((size_t)y1c * pw + x0w) * 4;
+				const BYTE* p11 = pano + ((size_t)y1c * pw + x1w) * 4;
+				BYTE* d = drow + (size_t)px * 4;
+				for (int ch = 0; ch < 4; ++ch) {
+					float top = p00[ch] + (p10[ch] - p00[ch]) * fx;
+					float bot = p01[ch] + (p11[ch] - p01[ch]) * fx;
+					float val = top + (bot - top) * fyy;
+					d[ch] = (BYTE)(val + 0.5f);
+				}
+				d[3] = 255;
+			}
+		}
+	}
+
 	// --- the two views -----------------------------------------------------
 
 	void RenderGrid(int W, int H, int cols, int rows, int cellW, int thumbH, int capH,
@@ -334,6 +496,11 @@ namespace
 				Thumb& t = GetThumb(page[k].path, (UINT)cellW, (UINT)thumbH);
 				if (t.ok) BlitInto(t.px, t.w, t.h, x, y, cellW, thumbH);
 				else DrawChip(x, y, cellW, thumbH, "load failed", 16, 10, 235);
+				// Tags in the thumbnail corner (HDR / 360).
+				int bw = cellW / 6, bh = capH * 4 / 5, bpad = capH / 4;
+				int tbx = x + cellW - bw - bpad;
+				if (IsHdr(page[k].name)) { DrawBadge(tbx, y + bpad, bw, bh, "HDR", bh * 5 / 9); tbx -= bw + bpad; }
+				if (t.ok && IsEquirect(t.w, t.h)) DrawBadge(tbx, y + bpad, bw, bh, "360", bh * 5 / 9);
 				// filename label
 				DrawChip(x, y + thumbH, cellW, capH, page[k].name, capH * 5 / 11, 22, 235);
 				if ((int)k == selCell) DrawBorder(x - 3, y - 3, cellW + 6, thumbH + capH + 6, 3, kAccent);
@@ -347,20 +514,58 @@ namespace
 	}
 
 	void RenderSingle(int W, int H, const std::string& path, const std::string& name,
-		int oneBased, int total)
+		int oneBased, int total, bool look360, float yaw, float pitch, float fov)
 	{
 		const int capH = (H / 22 < 30) ? 30 : H / 22;
-		UINT boxW = (UINT)(W * 0.96), boxH = (UINT)((H - capH) * 0.96);
+		const int areaH = H - capH;
+		UINT boxW = (UINT)(W * 0.96), boxH = (UINT)(areaH * 0.96);
+
+		// Flat decode (cached) - also tells us whether this is a 2:1 panorama.
 		if (!(g_fullOk && g_fullPath == path && g_fullBoxW == boxW && g_fullBoxH == boxH)) {
 			g_fullOk = DecodeScaled(Widen(path), boxW, boxH, g_fullImg, g_fullW, g_fullH);
 			g_fullPath = path; g_fullBoxW = boxW; g_fullBoxH = boxH;
 		}
-		if (g_fullOk) BlitInto(g_fullImg, g_fullW, g_fullH, 0, 0, W, H - capH);
-		else DrawChip(W / 4, H / 2 - capH / 2, W / 2, capH, "Could not load  " + name, capH * 5 / 11);
+		bool is360 = g_fullOk && IsEquirect(g_fullW, g_fullH);
+		EnterCriticalSection(&s.cs); s.cur360 = is360; LeaveCriticalSection(&s.cs);
+
+		if (look360 && is360) {
+			// Decode the panorama at full (capped) resolution once for crisp sampling.
+			if (!(g_panoOk && g_panoPath == path)) {
+				g_panoOk = DecodeScaled(Widen(path), 4096, 2048, g_pano, g_panoW, g_panoH);
+				g_panoPath = path;
+			}
+			if (g_panoOk) Reproject360(W, areaH, yaw, pitch, fov);
+			else if (g_fullOk) BlitInto(g_fullImg, g_fullW, g_fullH, 0, 0, W, areaH);
+		}
+		else if (g_fullOk) {
+			BlitInto(g_fullImg, g_fullW, g_fullH, 0, 0, W, areaH);
+		}
+		else {
+			DrawChip(W / 4, H / 2 - capH / 2, W / 2, capH, "Could not load  " + name, capH * 5 / 11);
+		}
+
+		// Tags in the top-right corner.
+		int bx = W - capH / 2;
+		if (IsHdr(name)) {
+			int bw = capH * 2, bh = capH * 3 / 4;
+			bx -= bw; DrawBadge(bx, capH / 2, bw, bh, "HDR", bh * 5 / 9);
+			bx -= capH / 3;
+		}
+		if (is360) {
+			int bw = capH * 2, bh = capH * 3 / 4;
+			bx -= bw; DrawBadge(bx, capH / 2, bw, bh, "360", bh * 5 / 9);
+		}
 
 		char info[512];
-		sprintf_s(info, "%d / %d      %s      <  >  Browse      Enter / Backspace  Back",
-			oneBased, total, name.c_str());
+		if (look360 && is360)
+			sprintf_s(info, "%d / %d   %s   Arrows  Look      F  Recenter      Enter  Flat      Backspace  Grid",
+				oneBased, total, name.c_str());
+		else if (is360)
+			sprintf_s(info, "%d / %d   %s   Enter  360 View      <  >  Browse      Backspace  Grid",
+				oneBased, total, name.c_str());
+		else
+			sprintf_s(info, "%d / %d      %s      <  >  Browse      Enter / Backspace  Back",
+				oneBased, total, name.c_str());
 		DrawChip(0, H - capH, W, capH, info, capH * 4 / 11);
 	}
 
@@ -390,6 +595,7 @@ namespace
 		bool vis; int mode, selOneBased = 0, total = 0;
 		std::string filterLabel, singlePath, singleName;
 		std::vector<FileEntry> page; int selCell = 0;
+		bool look360 = false; float yaw360 = 0, pitch360 = 0, fov360 = 90;
 
 		EnterCriticalSection(&s.cs);
 		{
@@ -401,7 +607,7 @@ namespace
 						case C_RIGHT: if (s.sel < n - 1) s.sel++; break;
 						case C_UP:    if (s.sel - cols >= 0) s.sel -= cols; break;
 						case C_DOWN:  if (s.sel + cols < n) s.sel += cols; break;
-						case C_ACTIVATE: if (n > 0) s.mode = SINGLE; break;
+						case C_ACTIVATE: if (n > 0) { s.mode = SINGLE; s.look360 = false; } break;
 						case C_BACK:  s.visible = false; break;
 						case C_FILTER:
 							s.filterIdx = (s.filterIdx + 2 <= (int)s.dates.size()) ? s.filterIdx + 1 : -1;
@@ -414,11 +620,23 @@ namespace
 							break;
 					}
 				}
-				else { // SINGLE
+				else if (s.look360) { // SINGLE - panning a 360 panorama
+					const float step = 2.5f;
+					switch (c) {
+						case C_LEFT:  s.yaw360 -= step; break;
+						case C_RIGHT: s.yaw360 += step; break;
+						case C_UP:    s.pitch360 += step; if (s.pitch360 > 85.0f) s.pitch360 = 85.0f; break;
+						case C_DOWN:  s.pitch360 -= step; if (s.pitch360 < -85.0f) s.pitch360 = -85.0f; break;
+						case C_ACTIVATE: s.look360 = false; break;              // back to flat
+						case C_BACK:  s.mode = GRID; s.look360 = false; break;  // back to grid
+						case C_FILTER: s.yaw360 = 0.0f; s.pitch360 = 0.0f; s.fov360 = 90.0f; break; // recenter
+					}
+				}
+				else { // SINGLE - flat view
 					switch (c) {
 						case C_LEFT:  if (n > 0) s.sel = (s.sel - 1 + n) % n; break;
 						case C_RIGHT: if (n > 0) s.sel = (s.sel + 1) % n; break;
-						case C_ACTIVATE:
+						case C_ACTIVATE: if (s.cur360) { s.look360 = true; s.yaw360 = 0.0f; s.pitch360 = 0.0f; s.fov360 = 90.0f; } break;
 						case C_BACK:  s.mode = GRID; break;
 						default: break;
 					}
@@ -434,6 +652,7 @@ namespace
 			filterLabel = (s.filterIdx < 0 || s.filterIdx >= (int)s.dates.size())
 				? std::string("All dates") : s.dates[s.filterIdx];
 
+			look360 = s.look360; yaw360 = s.yaw360; pitch360 = s.pitch360; fov360 = s.fov360;
 			if (mode == SINGLE && total > 0) {
 				singlePath = s.files[s.filtered[s.sel]].path;
 				singleName = s.files[s.filtered[s.sel]].name;
@@ -456,7 +675,7 @@ namespace
 
 		ComposeBackdrop(W, H);
 		if (mode == SINGLE && !singlePath.empty())
-			RenderSingle(W, H, singlePath, singleName, selOneBased, total);
+			RenderSingle(W, H, singlePath, singleName, selOneBased, total, look360, yaw360, pitch360, fov360);
 		else
 			RenderGrid(W, H, cols, rows, cellW, thumbH, capH, margin, gridTop, gap, headerH,
 				page, selCell, filterLabel, selOneBased, total);
@@ -506,6 +725,8 @@ namespace
 		g_thumbs.clear();
 		g_fullImg.clear(); g_fullImg.shrink_to_fit();
 		g_fullOk = false; g_fullPath.clear(); g_fullBoxW = g_fullBoxH = 0;
+		g_pano.clear(); g_pano.shrink_to_fit();
+		g_panoOk = false; g_panoPath.clear(); g_panoW = g_panoH = 0;
 		SafeRelease(g_wic);
 		CoUninitialize();
 	}
@@ -606,6 +827,7 @@ namespace CaptureGallery
 			s.filterIdx = -1;
 			RebuildFilteredLocked();
 			s.sel = 0; s.mode = GRID; s.visible = true;
+			s.look360 = false; s.cur360 = false;
 		}
 		LeaveCriticalSection(&s.cs);
 		if (empty) return false;
@@ -627,6 +849,15 @@ namespace CaptureGallery
 		if (!g_inited.load()) return false;
 		EnterCriticalSection(&s.cs);
 		bool v = s.visible;
+		LeaveCriticalSection(&s.cs);
+		return v;
+	}
+
+	bool IsLooking360()
+	{
+		if (!g_inited.load()) return false;
+		EnterCriticalSection(&s.cs);
+		bool v = s.visible && s.mode == SINGLE && s.look360;
 		LeaveCriticalSection(&s.cs);
 		return v;
 	}

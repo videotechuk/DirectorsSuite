@@ -86,6 +86,7 @@
     <ClInclude Include="Editor\Data\SceneScenariosData.h" />
     <ClInclude Include="Editor\ScreenCapture.h" />
     <ClInclude Include="Editor\CaptureGallery.h" />
+    <ClInclude Include="Editor\HdrTonemap.h" />
     <ClInclude Include="Editor\TimecycleRT.h" />
     <ClInclude Include="Editor\PhotoAudio.h" />
     <ClInclude Include="Editor\BlackBarsPatch.h" />
