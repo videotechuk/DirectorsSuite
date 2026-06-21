@@ -113,7 +113,6 @@ namespace KeyBind
 		static const std::vector<Def> defs = {
 			{ "Open Menu",              &CConfig::KeyOpenMenu },
 			{ "Toggle Photo Mode",      &CConfig::KeyPhotoMode },
-			{ "Placement Camera",       &CConfig::KeyFreeCamToggle },
 			{ "Insert Camera",          &CConfig::KeyAddCamera },
 			{ "Take Screenshot",        &CConfig::KeyScreenshot },
 			{ "Next Camera",            &CConfig::KeyNextCamera },

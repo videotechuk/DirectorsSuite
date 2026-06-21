@@ -89,17 +89,8 @@ static void HandleHotkeys()
 		return;
 	}
 
-	if (g_Config.KeyFreeCamToggle && IsKeyJustUp((DWORD)g_Config.KeyFreeCamToggle)) {
-		if (!g_FreeCam.IsActive()) {
-			g_Director.Deactivate(false);
-		}
-		g_FreeCam.Toggle();
-		if (!g_FreeCam.IsActive()) {
-			UIUtil::PrintSubtitle("Placement Camera Mode ~COLOR_BLUE~OFF~s~");
-		}
-		// ON gets no extra subtitle - placement mode shows its own instructions
-	}
-
+	// Placement Camera Mode is entered from the menu (Camera Shots > Place a
+	// Camera), not a hotkey. INSERT still places / saves cameras while flying.
 	if (g_Config.KeyAddCamera && IsKeyJustUp((DWORD)g_Config.KeyAddCamera)) {
 		// Repositioning an existing camera saves into it instead of creating
 		if (g_FreeCam.IsActive() && g_FreeCam.EditingCameraIndex >= 0) {
@@ -173,6 +164,28 @@ void main()
 		// Photo mode runs first so it can consume hotkeys (menu open, camera
 		// placement...) before anything else reacts to them.
 		g_PhotoMode.Tick();
+
+		// Backspace leaves Placement Camera Mode. Only when the menu is closed -
+		// while it is open Backspace is the menu's Back key. Checked before the
+		// menu's Update() because its input read consumes (resets) the key.
+		if (!g_Menu->IsOpen() && g_FreeCam.IsActive() && IsKeyJustUp(VK_BACK)) {
+			g_FreeCam.Deactivate();
+			UIUtil::PrintSubtitle("Placement Camera Mode is now off");
+		}
+
+		// One-time welcome, shown the first time the player is actually in-game
+		// (not at a load screen / fade). Persisted so it only ever shows once.
+		static bool s_welcomeDone = false;
+		if (!s_welcomeDone && !g_Config.WelcomeShown) {
+			Player plyr = PLAYER::PLAYER_ID();
+			Ped pped = PLAYER::PLAYER_PED_ID();
+			if (pped != 0 && ENTITY::DOES_ENTITY_EXIST(pped) && PLAYER::IS_PLAYER_CONTROL_ON(plyr) && !CAM::IS_SCREEN_FADED_OUT()) {
+				UIUtil::ShowGameTip("Thank you for installing Director Creator Suite! To get started, press F1 for Photo Mode or F2 for Video Editor Mode. For any support or feedback, please visit the Nexus Mods page", 12000);
+				g_Config.WelcomeShown = true;
+				g_Config.Save();
+				s_welcomeDone = true;
+			}
+		}
 
 		g_Menu->Update();
 		CEditorMenus::Tick();

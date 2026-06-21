@@ -10,7 +10,6 @@ class CConfig
 public:
 	// [Keys] - virtual key codes
 	int KeyOpenMenu = VK_F2;
-	int KeyFreeCamToggle = VK_F4;
 	int KeyCameraAutoSwitchingStartStop = 0; // unassigned by default; set in INI
 	int KeyAimAssist = 'C';                  // hold while aiming
 	int KeyAddCamera = VK_INSERT;            // add camera at current view
@@ -29,6 +28,8 @@ public:
 
 	// [Tips] - bitmask of Photo Mode tabs whose first-time tip has been shown
 	int   TipsSeenMask = 0;
+	// One-time welcome message shown the first time the player loads in-game
+	bool  WelcomeShown = false;
 
 	// [Cameras]
 	std::string NamingTemplate = "CAM {index}"; // {index} {total} {hour} {minute}

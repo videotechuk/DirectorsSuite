@@ -22,8 +22,10 @@ void COverlays::Tick()
 	// Screen aids are part of the game's framebuffer, so OBS captures them.
 	// While a recording runs they all stay hidden unless explicitly allowed;
 	// the letterbox is exempt because it is a cinematic effect meant to be
-	// part of the video.
-	bool hideForRecording = g_OBS.IsRecording() && !ShowOverlaysWhileRecording;
+	// part of the video. Use the director's recording intent (set the instant a
+	// recorded playback starts) alongside the confirmed OBS state, so overlays
+	// are gone from the first frame, not after OBS's websocket round-trip.
+	bool hideForRecording = (g_OBS.IsRecording() || g_Director.IsRecordingProject()) && !ShowOverlaysWhileRecording;
 
 	if (ShowGrid && !hideForRecording) {
 		DrawGrid();
@@ -39,40 +41,110 @@ void COverlays::Tick()
 		RemoveAllProps();
 	}
 
-	if (ShowProgressBar && !hideForRecording) {
+	// During full-project preview the new timeline (DrawProjectPlaybackBar)
+	// already shows progress, so the thin transition bar would just clutter the
+	// bottom of the screen - suppress it there. It still shows for manual /
+	// auto switching.
+	if (ShowProgressBar && !hideForRecording && !g_Director.IsPlayingProject()) {
 		DrawTransitionBar();
 	}
 
 	DrawProjectPlaybackBar();
 }
 
+namespace {
+	// ms -> "MM:SS.cs" (centiseconds), matching the Rockstar Editor timecode style.
+	std::string FormatTimecode(int ms)
+	{
+		if (ms < 0) ms = 0;
+		int totalCs = ms / 10;
+		int cs  = totalCs % 100;
+		int sec = (totalCs / 100) % 60;
+		int min = (totalCs / 100) / 60;
+		char buf[16];
+		sprintf_s(buf, "%02d:%02d.%02d", min, sec, cs);
+		return buf;
+	}
+}
+
+// Full-project preview HUD (Rockstar-Editor style): a duration box in the top
+// right and a timeline across the bottom with one keyframe node per camera
+// shot, plus a playhead. Shown only for non-recorded preview playback - while
+// OBS records, in-game overlays would be baked into the video, so the screen
+// stays clean (unless ShowOverlaysWhileRecording).
 void COverlays::DrawProjectPlaybackBar()
 {
+	if (!g_Director.IsPlayingProject()) return;
+	// Hide the preview HUD the whole time a recorded playback runs (not just once
+	// OBS confirms), so the timeline/duration box never lands in the video.
+	if ((g_OBS.IsRecording() || g_Director.IsRecordingProject()) && !ShowOverlaysWhileRecording) return;
+
+	int totalMs = g_Director.ProjectDurationMs();
+	if (totalMs <= 0) return;
+
 	float progress = 0.0f;
-	if (!g_Director.GetProjectProgress(progress)) return;
+	g_Director.GetProjectProgress(progress);
+	int elapsedMs = (int)(progress * (float)totalMs + 0.5f);
 
-	// Everything drawn in-game ends up in OBS's capture, so while a recording
-	// is running the bar and REC indicator stay off the screen by default -
-	// OBS's own UI is the recording feedback. The bar still shows for
-	// non-recorded playback.
-	if (g_OBS.IsRecording() && !ShowOverlaysWhileRecording) return;
+	const float aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+	const int activeIdx = g_Director.ActiveIndex();
+	const int accentR = 95, accentG = 180, accentB = 235; // Rockstar-Editor blue
 
-	const float barW = 0.5f;
-	const float barH = 0.005f;
-	const float y = 0.025f;
+	// Count enabled shots and which one is live.
+	int shotCount = 0, shotNum = 0;
+	for (int i = 0; i < g_CameraManager.Count(); i++) {
+		EditorCamera* cam = g_CameraManager.Get(i);
+		if (!cam || !cam->enabled) continue;
+		shotCount++;
+		if (i == activeIdx) shotNum = shotCount;
+	}
 
-	GRAPHICS::DRAW_RECT(0.5f, y, barW, barH, 0, 0, 0, 170, false, false);
-	float fillW = barW * progress;
-	GRAPHICS::DRAW_RECT(0.5f - barW * 0.5f + fillW * 0.5f, y, fillW, barH, 220, 40, 40, 230, false, false);
+	// ----- top-right duration box -----
+	const float boxW = 0.175f, boxH = 0.062f;
+	const float boxCx = 1.0f - 0.018f - boxW * 0.5f;
+	const float boxCy = 0.022f + boxH * 0.5f;
+	GRAPHICS::DRAW_RECT(boxCx, boxCy, boxW, boxH, 0, 0, 0, 185, false, false);
+	GRAPHICS::DRAW_RECT(boxCx, boxCy - boxH * 0.5f + 0.0016f, boxW, 0.0032f, accentR, accentG, accentB, 240, false, false);
 
-	// Blinking REC dot + label while OBS is recording this playback
-	if (g_OBS.IsRecording()) {
-		bool blink = ((GetTickCount() / 500) % 2) == 0;
-		if (blink) {
-			GRAPHICS::DRAW_RECT(0.5f - barW * 0.5f - 0.02f, y, 0.008f, 0.014f, 230, 30, 30, 255, false, false);
-		}
-		Drawing::DrawFormattedText("REC", Font::Body, 230, 40, 40, 255, Alignment::Left, 18,
-			(0.5f - barW * 0.5f - 0.005f) * SCREEN_WIDTH, (y - 0.012f) * SCREEN_HEIGHT);
+	const float boxPxX = boxCx * SCREEN_WIDTH;
+	const float boxTopPx = (boxCy - boxH * 0.5f) * SCREEN_HEIGHT;
+	Drawing::DrawFormattedText("PROJECT   Shot " + std::to_string(shotNum) + "/" + std::to_string(shotCount),
+		Font::Body, 205, 214, 224, 230, Alignment::Center, 15, boxPxX, boxTopPx + 0.0105f * SCREEN_HEIGHT);
+	Drawing::DrawFormattedText(FormatTimecode(elapsedMs) + "  /  " + FormatTimecode(totalMs),
+		Font::Body, 255, 255, 255, 245, Alignment::Center, 23, boxPxX, boxTopPx + 0.027f * SCREEN_HEIGHT);
+
+	// ----- bottom project timeline -----
+	const float barW = 0.80f;
+	const float barLeft = 0.5f - barW * 0.5f;
+	const float y = 0.945f;
+	const float trackH = 0.007f;
+
+	GRAPHICS::DRAW_RECT(0.5f, y, barW, trackH, 0, 0, 0, 185, false, false);          // track
+	float fillW = barW * EMath::Clamp(progress, 0.0f, 1.0f);
+	GRAPHICS::DRAW_RECT(barLeft + fillW * 0.5f, y, fillW, trackH, accentR, accentG, accentB, 240, false, false); // fill
+
+	// One keyframe node per shot, placed at that shot's start time.
+	int cumMs = 0;
+	for (int i = 0; i < g_CameraManager.Count(); i++) {
+		EditorCamera* cam = g_CameraManager.Get(i);
+		if (!cam || !cam->enabled) continue;
+		float f = (float)cumMs / (float)totalMs;
+		float nodeX = barLeft + f * barW;
+		bool current = (i == activeIdx);
+		float s = current ? 0.0125f : 0.0085f;
+		int r = current ? 255 : 235, g = current ? 205 : 235, b = current ? 55 : 235;
+		GRAPHICS::DRAW_RECT(nodeX, y, s, s * aspect, r, g, b, 255, false, false);
+		cumMs += cam->durationMs;
+	}
+
+	// Playhead + the live camera's name above it.
+	float playX = barLeft + EMath::Clamp(progress, 0.0f, 1.0f) * barW;
+	GRAPHICS::DRAW_RECT(playX, y, 0.0022f, 0.032f, 255, 255, 255, 255, false, false);
+
+	EditorCamera* curCam = g_CameraManager.Get(activeIdx);
+	if (curCam) {
+		Drawing::DrawFormattedText(curCam->name, Font::Body, 255, 255, 255, 225, Alignment::Center, 16,
+			playX * SCREEN_WIDTH, (y - 0.042f) * SCREEN_HEIGHT);
 	}
 }
 

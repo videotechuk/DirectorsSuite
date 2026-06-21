@@ -78,8 +78,7 @@ A staging tool built into Photo Mode. Everything it creates is [b]temporary[/b] 
 [list]
 [*][b]F2[/b] — open / close the menu
 [*][b]F1[/b] — toggle Photo Mode
-[*][b]F4[/b] — toggle Placement Camera (free cam)
-[*][b]INSERT[/b] — insert a camera at the current view
+[*][b]INSERT[/b] — insert a camera at the current view (Placement Camera Mode starts from Camera Shots > Place a Camera)
 [*][b]F3[/b] — lossless / HDR screenshot
 [*][b]N / B[/b] — next / previous camera
 [*][b]C[/b] (hold while aiming) — Aim Assist

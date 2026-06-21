@@ -1,9 +1,11 @@
 #include "FreeCam.h"
 #include "EditorMath.h"
 #include "Config.h"
+#include "CameraManager.h"
 #include "..\script.h"
 #include "..\keyboard.h"
 #include "..\UI\UIUtil.h"
+#include "..\UI\Menu.hpp"
 
 void CFreeCam::Toggle()
 {
@@ -20,10 +22,10 @@ void CFreeCam::ShowPlacementPrompt()
 
 	std::string key = (g_Config.KeyAddCamera == VK_INSERT) ? "INSERT" : "the Add Camera key";
 	if (EditingCameraIndex >= 0) {
-		UIUtil::PrintSubtitle("You're currently in ~COLOR_YELLOW~Placement Camera Mode~s~. Reposition the camera, then use ~COLOR_RED~" + key + "~s~ button to save its new position");
+		UIUtil::PrintSubtitle("You're currently in ~COLOR_YELLOW~Placement Camera Mode~s~. Reposition the camera, then use ~COLOR_RED~" + key + "~s~ to save its new position, or press ~COLOR_RED~BACKSPACE~s~ to back out");
 	}
 	else {
-		UIUtil::PrintSubtitle("You're currently in ~COLOR_YELLOW~Placement Camera Mode~s~. Use ~COLOR_RED~" + key + "~s~ button to place a new camera");
+		UIUtil::PrintSubtitle("You're currently in ~COLOR_YELLOW~Placement Camera Mode~s~. Use ~COLOR_RED~" + key + "~s~ to place a new camera, or press ~COLOR_RED~BACKSPACE~s~ to back out");
 	}
 }
 
@@ -93,6 +95,13 @@ void CFreeCam::Deactivate()
 {
 	if (!m_active) return;
 
+	// Bake the final framed view into the camera being placed/repositioned, while
+	// the free cam is still the rendered camera. This way every exit path (Finish
+	// Placing, Backspace, N/B, toggle off...) leaves the camera where you flew to.
+	if (EditingCameraIndex >= 0) {
+		g_CameraManager.UpdateCameraFromCurrentView(EditingCameraIndex);
+	}
+
 	CAM::RENDER_SCRIPT_CAMS(false, false, 0, true, false, 0);
 	if (m_cam != 0 && CAM::DOES_CAM_EXIST(m_cam)) {
 		CAM::SET_CAM_ACTIVE(m_cam, false);
@@ -108,10 +117,18 @@ void CFreeCam::Deactivate()
 	EditingCameraIndex = -1;
 }
 
+void CFreeCam::SetFov(float fov)
+{
+	m_fov = EMath::Clamp(fov, 5.0f, 120.0f);
+}
+
 void CFreeCam::Tick()
 {
 	if (!m_active || m_cam == 0) return;
 
+	// Keep the on-screen reminder up the whole time Placement Camera Mode is
+	// active - even with the settings panel open - so you always know how to back
+	// out. Flying stays active alongside the menu (Rockstar-Editor style).
 	ShowPlacementPrompt();
 
 	// Take over the controls while flying

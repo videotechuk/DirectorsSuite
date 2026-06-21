@@ -143,4 +143,14 @@ namespace UIUtil
 	void PrintSubtitle(const std::string& msg) { PrintSubtitle(msg.c_str()); }
 	void PrintSubtitle(const int msg) { PrintSubtitle(std::to_string(msg).c_str()); }
 	void PrintSubtitle(const float msg) { PrintSubtitle(std::to_string(msg).c_str()); }
+
+	void ShowGameTip(const std::string& msg, int durationMs)
+	{
+		// RDR2 help-text feed (the top-left tip toast). The native takes two small
+		// structs by pointer: p0 = { durationMs, 0, 0, 0 }, p1 = { 0, textPtr }.
+		const char* str = MISC::VAR_STRING(10, "LITERAL_STRING", msg.c_str());
+		UINT64 data0[4] = { (UINT64)(unsigned int)durationMs, 0, 0, 0 };
+		UINT64 data1[2] = { 0, (UINT64)str };
+		UIFEED::_UI_FEED_POST_HELP_TEXT((Any*)data0, (Any*)data1, TRUE);
+	}
 }

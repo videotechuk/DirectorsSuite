@@ -17,6 +17,11 @@ namespace UIUtil
 	void PrintSubtitle(const int msg);
 	void PrintSubtitle(const float msg);
 
+	// Native RDR2 game-tip toast (the top-left help-text feed), via
+	// _UI_FEED_POST_HELP_TEXT. Unlike PrintSubtitle (objective text) this is the
+	// game's own notification feed - used for the one-time welcome message.
+	void ShowGameTip(const std::string& msg, int durationMs = 8000);
+
 	// Script-drawn on-screen notification. Photo Mode freezes the world / runs a
 	// slow timescale, and in that state the native subtitle/objective UI never
 	// renders. While "script mode" is on (Photo Mode turns it on for its whole

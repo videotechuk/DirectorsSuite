@@ -2255,7 +2255,6 @@ void CPhotoMode::HandleInput()
 	// Keep the editor hotkeys / main-menu key from leaking in
 	ResetKeyState((DWORD)g_Config.KeyOpenMenu);
 	ResetKeyState((DWORD)g_Config.KeyAddCamera);
-	ResetKeyState((DWORD)g_Config.KeyFreeCamToggle);
 	ResetKeyState((DWORD)g_Config.KeyNextCamera);
 	ResetKeyState((DWORD)g_Config.KeyPrevCamera);
 

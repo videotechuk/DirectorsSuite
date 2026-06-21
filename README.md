@@ -47,8 +47,9 @@ The ScriptHookRDR2 SDK headers/lib used for linking live in `inc/` and `lib/`
 3. *(Optional)* Copy `Icons/` to `<game>\DirectorsSuite_Icons` for the Photo Mode tab icons.
 
 Default keys (rebindable in `DirectorsSuite.ini`): **F2** menu · **F1** Photo Mode ·
-**F4** placement camera · **INSERT** insert camera · **F3** screenshot · **N/B** next/prev
+**INSERT** insert camera · **F3** screenshot · **N/B** next/prev
 camera · **C** (hold while aiming) aim assist · **H** hide UI for a clean shot.
+Placement Camera Mode is started from **Camera Shots > Place a Camera** in the menu.
 
 ## Credits
 

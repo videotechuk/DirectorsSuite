@@ -40,6 +40,11 @@ public:
 	void PlayProject(bool record);
 	void StopProject();                 // cancel an in-progress project playback
 	bool IsPlayingProject() const { return m_projectPlayback; }
+	// True while the current project playback is being recorded (set the instant
+	// recorded playback starts, before OBS confirms over the websocket). Use this
+	// rather than g_OBS.IsRecording() to keep overlays out of the recording from
+	// the very first frame.
+	bool IsRecordingProject() const { return m_projectRecording; }
 	// Total project run time across all enabled cameras (durations + transitions)
 	int  ProjectDurationMs() const;
 	// 0..1 progress through the whole project; false when not playing

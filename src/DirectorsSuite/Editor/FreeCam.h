@@ -25,6 +25,7 @@ public:
 	Vector3 Position() const { return m_pos; }
 	Vector3 Rotation() const { return m_rot; }
 	float Fov() const { return m_fov; }
+	void SetFov(float fov);   // drive the live FOV (e.g. from the Camera Properties zoom slider)
 
 	void Tick(); // must run every frame while active
 

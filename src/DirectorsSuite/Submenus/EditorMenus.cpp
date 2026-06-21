@@ -139,12 +139,14 @@ void CEditorMenus::RebuildCameraEdit()
 			g_Menu->GoToSubmenu(Submenu_Camera_Edit_Properties);
 		});
 
-		sub->AddRegularOption("Edit Camera Placement", "Opens Placement Camera Mode at this camera. Fly to the new spot, then press INSERT to save the position into this camera", [] {
+		sub->AddRegularOption("Edit Camera Placement", "Flies this camera with its settings panel open. Frame the new spot (controls stay active), then Finish Placing to save the new position", [] {
 			if (EditorCamera* c = SelCam()) {
 				g_Director.Deactivate(false);
 				g_FreeCam.ActivateAt(c->pos, c->rot, c->fov);
 				g_FreeCam.EditingCameraIndex = g_CameraManager.SelectedIndex;
-				g_Menu->SetEnabled(false); // get the menu out of the way while flying
+				// Open the settings panel and keep the menu up while flying.
+				CEditorMenus::RebuildCameraEditProperties();
+				g_Menu->GoToSubmenu(Submenu_Camera_Edit_Properties);
 			}
 		});
 
@@ -241,11 +243,27 @@ void CEditorMenus::RebuildCameraEditProperties()
 	{
 		EditorCamera* cam = SelCam();
 
+		// While placing this camera, a clear "done" action that bakes in the
+		// current framed view and leaves Placement Camera Mode.
+		if (g_FreeCam.IsActive()) {
+			RegularOption* fin = sub->AddRegularOption("Finish Placing This Camera", "Save this shot at the current view, leave Placement Camera Mode and return to the Camera Shots menu", [] {
+				g_FreeCam.Deactivate();              // bakes the live view into the camera
+				// Return to Camera Shots (clean back-stack) instead of closing the
+				// whole menu, so you can keep working / place another shot.
+				g_Menu->OpenAt(Submenu_Cameras);
+				UIUtil::PrintSubtitle("Camera placed");
+			});
+			fin->TextR = 120; fin->TextG = 230; fin->TextB = 140;
+		}
+
 		// Zoom (FOV)
 		auto fovs = FloatRange(5.0f, 130.0f, 1.0f, 0);
 		sub->AddVectorOption("Zoom (FOV)", "Lower FOV = stronger zoom", fovs, [] {
 			if (EditorCamera* c = SelCam()) {
 				c->fov = FloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 5.0f, 1.0f);
+				// While composing in Placement Camera Mode, push the lens to the live
+				// camera so the framing updates as you drag the slider.
+				if (g_FreeCam.IsActive()) g_FreeCam.SetFov(c->fov);
 				LiveRefresh();
 			}
 		})->SetVectorIndex(FloatIndex(cam->fov, 5.0f, 1.0f, (int)fovs.size()));
@@ -595,6 +613,17 @@ void CEditorMenus::Tick()
 	Submenu* sub = g_Menu->GetCurrentSubmenu();
 	if (!sub) return;
 
+	// Backing out of the placement settings page leaves Placement Camera Mode too.
+	// The settings panel auto-opens during placement, so a plain menu "back" would
+	// otherwise keep navigating out (and eventually close the whole menu) while the
+	// camera is still flying. Catching it here means one Backspace exits placement
+	// and lands on the Camera Shots menu (saving the camera). Only for placement
+	// (EditingCameraIndex >= 0), not the standalone free camera.
+	if (g_FreeCam.IsActive() && g_FreeCam.EditingCameraIndex >= 0 && sub->ID != Submenu_Camera_Edit_Properties) {
+		g_FreeCam.Deactivate();
+		UIUtil::PrintSubtitle("Placement Camera Mode is now off");
+	}
+
 	// Deferred re-skin of the Camera Properties page (Hard Cut greys/ungreys the
 	// Transition row). Done here, outside the option's own callback, so rebuilding
 	// the active page can't tear down the running callback. The row count is
@@ -650,7 +679,45 @@ void CEditorMenus::BuildCamerasMenu()
 {
 	g_Menu->AddSubmenu("DIRECTOR'S SUITE", "Camera Shots", Submenu_Cameras, 10, [](Submenu* sub)
 	{
-		sub->AddRegularOption("Insert Camera Here", "Create a camera at the current view (free cam supported). Also bound to the Add Camera key", [] {
+		sub->AddRegularOption("Place a Camera (Placement Mode)", "Drops a camera here and opens its settings panel. Fly to frame the shot (controls stay active) and tweak its settings, then Finish Placing. Select again to exit", [] {
+			if (g_FreeCam.IsActive()) {
+				g_FreeCam.Deactivate();
+				UIUtil::PrintSubtitle("Placement Camera Mode is now off");
+				return;
+			}
+			g_Director.Deactivate(false);
+			int idx = g_CameraManager.InsertCamera();
+			if (idx < 0) { UIUtil::PrintSubtitle("~COLOR_RED~Camera limit reached (300)~s~"); return; }
+			EditorCamera* c = g_CameraManager.Get(idx);
+			g_CameraManager.SelectedIndex = idx;
+			g_FreeCam.ActivateAt(c->pos, c->rot, c->fov);
+			g_FreeCam.EditingCameraIndex = idx;       // ActivateAt resets this, so set it after
+			// Open the shot's settings automatically; the menu stays up and you can
+			// fly at the same time.
+			CEditorMenus::RebuildCameraEditProperties();
+			g_Menu->GoToSubmenu(Submenu_Camera_Edit_Properties);
+		});
+
+		sub->AddRegularOption("Adjust Camera Settings", "While in Placement Camera Mode: tweak this shot's zoom, duration, transition, shake, blur and more. Zoom updates the live view; fly on to fine-tune", [] {
+			if (!g_FreeCam.IsActive()) {
+				UIUtil::PrintSubtitle("~COLOR_YELLOW~Enter Placement Camera Mode first~s~ (Place a Camera)");
+				return;
+			}
+			int idx = g_FreeCam.EditingCameraIndex;
+			if (idx < 0) {
+				// Placing a new camera: drop it at the current view so there is a real
+				// camera to edit, then keep flying to fine-tune (INSERT re-saves it).
+				idx = g_CameraManager.InsertCamera();
+				if (idx < 0) { UIUtil::PrintSubtitle("~COLOR_RED~Camera limit reached (300)~s~"); return; }
+				g_FreeCam.EditingCameraIndex = idx;
+				UIUtil::PrintSubtitle("Placed ~COLOR_BLUE~" + g_CameraManager.Cameras[idx].name + "~s~ - adjust its settings, then fly to fine-tune");
+			}
+			g_CameraManager.SelectedIndex = idx;
+			CEditorMenus::RebuildCameraEditProperties();
+			g_Menu->GoToSubmenu(Submenu_Camera_Edit_Properties);
+		});
+
+		sub->AddRegularOption("Insert Camera Here", "Create a camera at the current view (placement camera supported). Also bound to the Add Camera key", [] {
 			int idx = g_CameraManager.InsertCamera();
 			if (idx < 0) {
 				UIUtil::PrintSubtitle("~COLOR_RED~Camera limit reached (300)~s~");
@@ -796,7 +863,7 @@ void CEditorMenus::RebuildCinematicMenu()
 		// One clear selector for what the camera is doing right now (inspired by
 		// SimpleCamera). Engages immediately and stays active when the menu
 		// closes; Off returns to the normal gameplay camera.
-		sub->AddVectorOption("Camera Mode", "Off = gameplay camera. Free Camera = fly anywhere (INSERT places a camera; also toggled by F4). Player Camera = custom follow camera",
+		sub->AddVectorOption("Camera Mode", "Off = gameplay camera. Free Camera = fly anywhere (INSERT places a camera). Player Camera = custom follow camera",
 			std::vector<const char*>{ "Off", "Free Camera", "Player Camera" }, [] {
 				int m = g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex();
 				if (m == 1) {            // Free Camera
@@ -1087,8 +1154,8 @@ void CEditorMenus::BuildHelpMenus()
 
 	g_Menu->AddSubmenu("HELP", "Getting Started", Submenu_Help_GettingStarted, 12, [](Submenu* sub)
 	{
-		AddHelpHeading(sub, "1. Open Placement Camera Mode (F4)");
-		AddHelpBody(sub, "You detach from the player and fly freely. WASD moves, the mouse looks, Shift is fast, Ctrl is slow, Space and Z go up and down, Q and E zoom. On-screen instructions stay visible the whole time.");
+		AddHelpHeading(sub, "1. Open Placement Camera Mode");
+		AddHelpBody(sub, "Camera Shots > Place a Camera detaches you from the player so you fly freely. WASD moves, the mouse looks, Shift is fast, Ctrl is slow, Space and Z go up and down, Q and E zoom. On-screen instructions stay visible the whole time.");
 
 		AddHelpHeading(sub, "2. Frame your shot, press INSERT");
 		AddHelpBody(sub, "What you see is exactly what the camera will record. INSERT stores a camera at the current view and a camera-box prop appears there. Cameras are named automatically: CAM 1, CAM 2, and so on.");
@@ -1097,7 +1164,7 @@ void CEditorMenus::BuildHelpMenus()
 		AddHelpBody(sub, "Place up to 300 cameras. Every box you see in the world is one stored camera.");
 
 		AddHelpHeading(sub, "4. Play it back");
-		AddHelpBody(sub, "Leave placement mode (F4). Press N and B to jump between cameras, or use Camera System > Play Full Project to watch the whole sequence start to finish - it can record itself through OBS automatically.");
+		AddHelpBody(sub, "Leave placement mode (Place a Camera again, or N / B to jump to a camera). Use Camera System > Play Full Project to watch the whole sequence start to finish - it can record itself through OBS automatically.");
 
 		AddHelpHeading(sub, "5. Edit any camera later");
 		AddHelpBody(sub, "Camera System > Camera List holds every camera. Open one to change its Camera Properties, or use Edit Camera Placement to fly it to a new position.");
@@ -1148,7 +1215,7 @@ void CEditorMenus::BuildHelpMenus()
 		AddHelpBody(sub, "Time & World Control sets weather, freezes the clock, slows time or freezes the whole game Photo Mode style. Director Mode places and directs NPCs with lighting.");
 
 		AddHelpHeading(sub, "2. Place and polish cameras");
-		AddHelpBody(sub, "Placement Camera Mode (F4) plus INSERT for each shot. Under Camera Properties set Duration (how long the shot holds), Transition (how it blends in), zoom, filter, blur and shake.");
+		AddHelpBody(sub, "Camera Shots > Place a Camera, then INSERT for each shot. Under Camera Properties set Duration (how long the shot holds), Transition (how it blends in), zoom, filter, blur and shake.");
 
 		AddHelpHeading(sub, "3. Clean the screen");
 		AddHelpBody(sub, "Interface & Visual Tools: hide the HUD and enable the letterbox. Camera markers and progress bars hide themselves automatically while recording.");
@@ -1166,7 +1233,7 @@ void CEditorMenus::BuildHelpMenus()
 	g_Menu->AddSubmenu("HELP", "Keys & Controls", Submenu_Help_Keys, 12, [](Submenu* sub)
 	{
 		AddHelpHeading(sub, "Defaults");
-		AddHelpBody(sub, "F2 opens this menu (controller: hold RB, press A). F1 opens Photo Mode. F4 toggles Placement Camera Mode. INSERT places a camera, or saves a reposition. N and B switch cameras. Hold C while free aiming for Aim Assist.");
+		AddHelpBody(sub, "F2 opens this menu (controller: hold RB, press A). F1 opens Photo Mode. INSERT places a camera, or saves a reposition. N and B switch cameras. Hold C while free aiming for Aim Assist. Placement Camera Mode is started from Camera Shots > Place a Camera.");
 
 		AddHelpHeading(sub, "Placement Camera Mode controls");
 		AddHelpBody(sub, "WASD moves, mouse looks, Shift fast, Ctrl slow, Space up, Z down, Q and E zoom.");

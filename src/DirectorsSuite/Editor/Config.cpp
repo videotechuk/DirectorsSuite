@@ -61,7 +61,6 @@ void CConfig::Load()
 	m_iniPath = GetIniPath("DirectorsSuite.ini");
 
 	KeyOpenMenu                       = ReadInt("Keys", "KeyOpenMenu", KeyOpenMenu);
-	KeyFreeCamToggle                  = ReadInt("Keys", "KeyFreeCamToggle", KeyFreeCamToggle);
 	KeyCameraAutoSwitchingStartStop   = ReadInt("Keys", "KeyCameraAutoSwitchingStartStop", KeyCameraAutoSwitchingStartStop);
 	KeyAimAssist                      = ReadInt("Keys", "KeyAimAssist", KeyAimAssist);
 	KeyAddCamera                      = ReadInt("Keys", "KeyAddCamera", KeyAddCamera);
@@ -78,6 +77,7 @@ void CConfig::Load()
 	FreeCamHighDetail       = ReadBool("FreeCam", "HighDetail", FreeCamHighDetail);
 
 	TipsSeenMask            = ReadInt("Tips", "SeenMask", TipsSeenMask);
+	WelcomeShown            = ReadBool("Tips", "WelcomeShown", WelcomeShown);
 
 	NamingTemplate      = ReadString("Cameras", "NamingTemplate", NamingTemplate.c_str());
 	DefaultDurationMs   = ReadInt("Cameras", "DefaultDurationMs", DefaultDurationMs);
@@ -138,7 +138,6 @@ void CConfig::Load()
 void CConfig::Save()
 {
 	WriteInt("Keys", "KeyOpenMenu", KeyOpenMenu);
-	WriteInt("Keys", "KeyFreeCamToggle", KeyFreeCamToggle);
 	WriteInt("Keys", "KeyCameraAutoSwitchingStartStop", KeyCameraAutoSwitchingStartStop);
 	WriteInt("Keys", "KeyAimAssist", KeyAimAssist);
 	WriteInt("Keys", "KeyAddCamera", KeyAddCamera);
@@ -155,6 +154,7 @@ void CConfig::Save()
 	WriteInt("FreeCam", "HighDetail", FreeCamHighDetail ? 1 : 0);
 
 	WriteInt("Tips", "SeenMask", TipsSeenMask);
+	WriteInt("Tips", "WelcomeShown", WelcomeShown ? 1 : 0);
 
 	WriteString("Cameras", "NamingTemplate", NamingTemplate.c_str());
 	WriteInt("Cameras", "DefaultDurationMs", DefaultDurationMs);
