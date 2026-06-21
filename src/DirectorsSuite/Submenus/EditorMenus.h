@@ -37,7 +37,8 @@ public:
 	static void RebuildDirectorNPCBehaviour();
 	static void RebuildDirectorPlayer();
 	static void RebuildDirectorHeroLight(bool forPlayer);
-	static void RebuildDirectorHeroLightPoint(int pointIndex);
+	static void RebuildDirectorSceneLight();      // scene-global art lights + sun
+	static void RebuildDirectorSceneLightEdit();  // selected light transform / intensity / colour
 
 	// Per-frame upkeep for pages with live values (OBS status line, record
 	// button label). Call once per frame from the script loop.

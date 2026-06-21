@@ -113,4 +113,11 @@ enum eSubmenuID : int
 	Submenu_PhotoMode_Credits,            // Photo-Mode-local copy of the credits page
 	Submenu_PhotoMode_Keys,               // Photo-Mode-local key bindings page
 	Submenu_PhotoMode_Captures,           // browse / view saved screenshots in-game
+
+	// Director Mode scene lighting (the Photo Mode "Improved Artificial Lighting"
+	// system ported in). Appended at the end so every existing ID stays stable;
+	// both pages keep larger IDs than their Director-menu parent so navigation
+	// reads as "forward".
+	Submenu_Director_SceneLight,          // scene-global art lights + sun
+	Submenu_Director_SceneLight_Edit,     // transform / intensity / colour of the selected light
 };

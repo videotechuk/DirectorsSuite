@@ -104,8 +104,14 @@ void CNativeMenu::CheckInput()
 	}
 
 	if (HUD::_UI_PROMPT_IS_VALID(m_BackPrompt) && HUD::_UI_PROMPT_IS_ACTIVE(m_BackPrompt)) {
-		// Honour Backspace even while the hold-to-back prompt is active.
-		m_BackPromptCompleted = HUD::_UI_PROMPT_HAS_STANDARD_MODE_COMPLETED(m_BackPrompt, 0) || m_BackKeyPressed;
+		// Mirror Select exactly: while the prompt is active, trigger on ONLY the
+		// prompt completion, which fires once per tap (that's why Select never
+		// double-acts). The prompt already resolves INPUT_GAME_MENU_CANCEL - on
+		// keyboard that maps to Backspace. Previously this also OR'd the cancel key,
+		// which fired AGAIN on key-release a frame later, so one tap backed out two
+		// levels. The m_BackKeyPressed fallback below still covers the (rare) frames
+		// where the prompt isn't active yet.
+		m_BackPromptCompleted = HUD::_UI_PROMPT_HAS_STANDARD_MODE_COMPLETED(m_BackPrompt, 0);
 	}
 	else {
 		m_BackPromptCompleted = m_BackKeyPressed;

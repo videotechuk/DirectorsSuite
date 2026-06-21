@@ -2,6 +2,7 @@
 #include "EditorMath.h"
 #include "CameraDirector.h"
 #include "HeroLight.h"
+#include "SceneLights.h"
 #include "OBSClient.h"
 #include "..\script.h"
 #include "..\UI\Drawing.h"
@@ -468,6 +469,18 @@ void CDirectorMode::Tick()
 	for (auto& npc : NPCs) {
 		HeroLight::Update(npc.handle, npc.light);
 	}
+
+	// Scene lights too. Hide the bulb fixtures (keeping their glow) once the
+	// scene goes live, so the placed light props don't show up in the filmed
+	// output the way they do while you're composing the shot.
+	SceneLights::Update(SceneLighting, IsSceneLive());
+}
+
+void CDirectorMode::ClearSceneLighting()
+{
+	SceneLights::RemoveAll(SceneLighting);
+	SceneLights::RestoreSun();
+	SceneLighting.sunUserEdited = false;
 }
 
 void CDirectorMode::StartHostileCountdown(int seconds)

@@ -14,19 +14,6 @@
 // Hero lighting
 // ---------------------------------------------------------------------------
 
-// One custom point light orbiting a character (drawn per frame with
-// DRAW_LIGHT_WITH_RANGE - RDR2 exposes no scripted spot light).
-struct HeroLightPoint
-{
-	bool  enabled = false;
-	int   r = 255, g = 244, b = 224;  // warm white default
-	float intensity = 2.0f;           // DRAW_LIGHT_WITH_RANGE intensity
-	float range = 6.0f;               // light range / falloff distance (m)
-	float orbitDeg = 45.0f;           // angle around the character (relative to heading)
-	float distance = 2.2f;            // orbit radius (m)
-	float height = 1.6f;              // height above character origin (m)
-};
-
 // Internal state of an authentic Rockstar light rig (anim scene)
 enum eRigState : int
 {
@@ -36,8 +23,9 @@ enum eRigState : int
 	RIG_RUNNING,
 };
 
-// Per-character lighting setup: an optional R* light rig + a classic
-// three-point custom rig (key / fill / back).
+// Per-character lighting setup: an authentic R* light rig pinned to the
+// character (cutscene-grade lighting with real shadows). Free-placed scene
+// lights live separately in the shared SceneLights system.
 struct HeroLightSetup
 {
 	// Rockstar rig (the exact system the photo studio / catalogue uses)
@@ -47,12 +35,7 @@ struct HeroLightSetup
 	int  rigState = RIG_OFF;          // eRigState (runtime only)
 	int  activeRigIndex = -1;         // rig the scene was created with
 
-	// Custom three-point rig
-	HeroLightPoint key  { false, 255, 244, 224, 2.5f, 6.0f,  45.0f, 2.2f, 1.7f };
-	HeroLightPoint fill { false, 205, 220, 255, 1.2f, 6.0f, -60.0f, 2.6f, 1.4f };
-	HeroLightPoint back { false, 255, 255, 255, 2.0f, 5.0f, 180.0f, 2.0f, 2.1f };
-
-	bool AnyEnabled() const { return rigEnabled || key.enabled || fill.enabled || back.enabled; }
+	bool AnyEnabled() const { return rigEnabled; }
 };
 
 // Authentic R* light rig anim scenes (harvested from the game's .yas assets).

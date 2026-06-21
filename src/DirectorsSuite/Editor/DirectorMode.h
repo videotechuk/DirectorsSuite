@@ -9,6 +9,7 @@
 #pragma once
 #include <vector>
 #include "DirectorTypes.h"
+#include "SceneLights.h"
 
 class CDirectorMode
 {
@@ -53,6 +54,13 @@ public:
 	int PlayerFacialIndex = 0;
 	int PlayerScenarioIndex = 0;
 	HeroLightSetup PlayerLight;
+
+	// --- scene lighting ---
+	// Free-placed glowing light props (the "Improved Artificial Lighting" system
+	// shared with Photo Mode) plus the sun-direction control. Scene-global, so it
+	// lives on the mode rather than per-character.
+	SceneLights::State SceneLighting;
+	void ClearSceneLighting();   // remove every placed light and revert the sun
 
 	// --- preview gating ---
 	// Facial expressions + scenarios run only while the scene is live.

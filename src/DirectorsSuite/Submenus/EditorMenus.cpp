@@ -53,6 +53,13 @@ static bool sModeFreeAngle = false;
 static bool sFollowRelative = true;
 static bool sCamEnabled = true;
 static bool sFocusPaused = false;
+static bool sHardCut = false;
+
+// Set when a Camera Properties option needs the page re-skinned (e.g. Hard Cut
+// greys/ungreys the Transition row). Rebuilding the active page from inside an
+// option's own callback would tear down the running callback, so the rebuild is
+// deferred to CEditorMenus::Tick().
+static bool sPropsRebuildPending = false;
 
 static bool sTargetHumansCombat = true;
 static bool sTargetHumansAll = false;
@@ -228,6 +235,7 @@ void CEditorMenus::RebuildCameraEditProperties()
 	if (!cam) return;
 
 	sFocusPaused = cam->focusPaused;
+	sHardCut = cam->hardCut;
 
 	g_Menu->AddSubmenu("DIRECTOR'S SUITE", "Camera Properties", Submenu_Camera_Edit_Properties, 12, [](Submenu* sub)
 	{
@@ -242,21 +250,41 @@ void CEditorMenus::RebuildCameraEditProperties()
 			}
 		})->SetVectorIndex(FloatIndex(cam->fov, 5.0f, 1.0f, (int)fovs.size()));
 
-		// Duration (auto switching hold time)
-		auto durations = FloatRange(250.0f, 30000.0f, 250.0f, 0);
-		sub->AddVectorOption("Duration (ms)", "How long this camera holds during automatic switching", durations, [] {
+		// Duration (auto switching hold time), in seconds. Up to 10 minutes.
+		auto durations = FloatRange(0.5f, 600.0f, 0.5f, 1);
+		sub->AddVectorOption("Duration (seconds)", "How long this camera holds during automatic switching / playback (up to 10 min)", durations, [] {
 			if (EditorCamera* c = SelCam()) {
-				c->durationMs = (int)FloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 250.0f, 250.0f);
+				float sec = FloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.5f, 0.5f);
+				c->durationMs = (int)(sec * 1000.0f + 0.5f);
 			}
-		})->SetVectorIndex(FloatIndex((float)cam->durationMs, 250.0f, 250.0f, (int)durations.size()));
+		})->SetVectorIndex(FloatIndex(cam->durationMs / 1000.0f, 0.5f, 0.5f, (int)durations.size()));
 
-		// Transition time
-		auto transitions = FloatRange(0.0f, 10000.0f, 250.0f, 0);
-		sub->AddVectorOption("Transition (ms)", "Interpolation time when switching to this camera. 0 = hard cut", transitions, [] {
+		// Hard cut: snap straight to this shot with no blend. Greys out Transition.
+		sub->AddBoolOption("Hard Cut", "Snap straight to this shot with no blend. Disables the transition time below", &sHardCut, [] {
 			if (EditorCamera* c = SelCam()) {
-				c->transitionMs = (int)FloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.0f, 250.0f);
+				c->hardCut = sHardCut;
+				sPropsRebuildPending = true; // re-skin so Transition greys/ungreys
 			}
-		})->SetVectorIndex(FloatIndex((float)cam->transitionMs, 0.0f, 250.0f, (int)transitions.size()));
+		});
+
+		// Transition time, in seconds (up to 10 min). Locked out while Hard Cut is
+		// on - shown greyed so the row keeps its place when it re-skins on toggle.
+		if (cam->hardCut) {
+			Option* o = sub->AddRegularOption("Transition (seconds)   [ Hard Cut ]",
+				"This shot is a hard cut - turn off Hard Cut to set a transition time", [] {
+					UIUtil::PrintSubtitle("~COLOR_YELLOW~Hard Cut is on~s~ - turn it off to set a transition time.");
+				});
+			o->TextR = 120; o->TextG = 120; o->TextB = 120; // greyed = disabled
+		}
+		else {
+			auto transitions = FloatRange(0.5f, 600.0f, 0.5f, 1);
+			sub->AddVectorOption("Transition (seconds)", "Interpolation time when switching to this camera (up to 10 min)", transitions, [] {
+				if (EditorCamera* c = SelCam()) {
+					float sec = FloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.5f, 0.5f);
+					c->transitionMs = (int)(sec * 1000.0f + 0.5f);
+				}
+			})->SetVectorIndex(FloatIndex(cam->transitionMs / 1000.0f, 0.5f, 0.5f, (int)transitions.size()));
+		}
 
 		// Smoothness
 		sub->AddVectorOption("Smoothness (Position)", "Easing applied to the camera position during transitions", EaseNames, [] {
@@ -565,7 +593,22 @@ void CEditorMenus::Tick()
 {
 	if (!g_Menu || !g_Menu->IsOpen()) return;
 	Submenu* sub = g_Menu->GetCurrentSubmenu();
-	if (!sub || sub->ID != Submenu_Settings_OBS) return;
+	if (!sub) return;
+
+	// Deferred re-skin of the Camera Properties page (Hard Cut greys/ungreys the
+	// Transition row). Done here, outside the option's own callback, so rebuilding
+	// the active page can't tear down the running callback. The row count is
+	// unchanged, so the cursor keeps its place.
+	if (sPropsRebuildPending) {
+		sPropsRebuildPending = false;
+		if (sub->ID == Submenu_Camera_Edit_Properties) {
+			int sel = g_Menu->GetSelectionIndex();
+			RebuildCameraEditProperties();
+			g_Menu->SetSelectionIndex(sel);
+		}
+	}
+
+	if (sub->ID != Submenu_Settings_OBS) return;
 
 	if (Option* status = sub->GetOption(OBS_OPT_STATUS)) {
 		status->Text = "Status: " + OBSStatusText();
@@ -1223,7 +1266,8 @@ void CEditorMenus::Init()
 	RebuildDirectorAddNPCList();
 	RebuildDirectorPlayer();
 	RebuildDirectorHeroLight(true);
-	RebuildDirectorHeroLightPoint(0);
+	RebuildDirectorSceneLight();
+	RebuildDirectorSceneLightEdit();
 
 	// Dynamic pages get an initial build so their IDs always exist
 	RebuildCameraList();

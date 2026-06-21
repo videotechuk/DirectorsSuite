@@ -27,6 +27,7 @@
     <ClCompile Include="Submenus\DirectorMenus.cpp" />
     <ClCompile Include="Editor\DirectorMode.cpp" />
     <ClCompile Include="Editor\HeroLight.cpp" />
+    <ClCompile Include="Editor\SceneLights.cpp" />
     <ClCompile Include="Editor\PhotoMode.cpp" />
     <ClCompile Include="Editor\PhotoModeUI.cpp" />
     <ClCompile Include="Editor\ScenePhotoMenus.cpp" />
@@ -76,6 +77,7 @@
     <ClInclude Include="Editor\DirectorTypes.h" />
     <ClInclude Include="Editor\DirectorMode.h" />
     <ClInclude Include="Editor\HeroLight.h" />
+    <ClInclude Include="Editor\SceneLights.h" />
     <ClInclude Include="Editor\PhotoMode.h" />
     <ClInclude Include="Editor\SceneEditor.h" />
     <ClInclude Include="Editor\SceneData.h" />
