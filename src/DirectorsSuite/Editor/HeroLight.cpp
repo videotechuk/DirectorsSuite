@@ -90,23 +90,6 @@ namespace
 		day = EMath::Clamp(day, 0.0f, 1.0f);
 		return 1.0f + day * 5.0f; // 1x night -> 6x midday
 	}
-
-	void DrawPoint(const Vector3& pedPos, float pedHeading, const HeroLightPoint& light)
-	{
-		if (!light.enabled) return;
-
-		// Orbit position around the character, relative to their heading so
-		// "key at 45 degrees" stays on the same cheek when they turn.
-		float angleRad = (pedHeading + light.orbitDeg) * EMath::DEG2RAD;
-		Vector3 offset{};
-		offset.x = -sinf(angleRad) * light.distance;
-		offset.y = cosf(angleRad) * light.distance;
-		offset.z = light.height;
-
-		Vector3 lightPos = EMath::Add(pedPos, offset);
-		GRAPHICS::DRAW_LIGHT_WITH_RANGE(lightPos.x, lightPos.y, lightPos.z,
-			light.r, light.g, light.b, light.range, light.intensity * DaylightBoostImpl());
-	}
 }
 
 float HeroLight::DaylightBoost() { return DaylightBoostImpl(); }
@@ -116,16 +99,6 @@ namespace HeroLight
 	void Update(Ped target, HeroLightSetup& setup)
 	{
 		UpdateRig(target, setup);
-
-		if (!ENTITY::DOES_ENTITY_EXIST(target)) return;
-		if (!setup.key.enabled && !setup.fill.enabled && !setup.back.enabled) return;
-
-		Vector3 pos = ENTITY::GET_ENTITY_COORDS(target, true, true);
-		float heading = ENTITY::GET_ENTITY_HEADING(target);
-
-		DrawPoint(pos, heading, setup.key);
-		DrawPoint(pos, heading, setup.fill);
-		DrawPoint(pos, heading, setup.back);
 	}
 
 	void Shutdown(HeroLightSetup& setup)

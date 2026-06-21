@@ -20,10 +20,10 @@ void CFreeCam::ShowPlacementPrompt()
 
 	std::string key = (g_Config.KeyAddCamera == VK_INSERT) ? "INSERT" : "the Add Camera key";
 	if (EditingCameraIndex >= 0) {
-		UIUtil::PrintSubtitle("~COLOR_OBJECTIVE~PLACEMENT CAMERA~s~  Reposition the camera, then press ~COLOR_BLUE~" + key + "~s~ to save its new position");
+		UIUtil::PrintSubtitle("You're currently in ~COLOR_YELLOW~Placement Camera Mode~s~. Reposition the camera, then use ~COLOR_RED~" + key + "~s~ button to save its new position");
 	}
 	else {
-		UIUtil::PrintSubtitle("~COLOR_OBJECTIVE~PLACEMENT CAMERA~s~  Press ~COLOR_BLUE~" + key + "~s~ to place a camera here");
+		UIUtil::PrintSubtitle("You're currently in ~COLOR_YELLOW~Placement Camera Mode~s~. Use ~COLOR_RED~" + key + "~s~ button to place a new camera");
 	}
 }
 

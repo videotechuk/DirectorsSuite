@@ -125,6 +125,7 @@ void CCameraManager::ApplyPreset(const CameraPreset& preset, EditorCamera& cam)
 	cam.modeFlags = preset.modeFlags;
 	cam.durationMs = preset.durationMs;
 	cam.transitionMs = preset.transitionMs;
+	cam.hardCut = preset.hardCut;
 	cam.easeLocation = preset.easeLocation;
 	cam.easeRotation = preset.easeRotation;
 	cam.shakeIndex = preset.shakeIndex;
@@ -145,6 +146,7 @@ void CCameraManager::SavePresetFromCamera(const EditorCamera& cam, const std::st
 	preset.modeFlags = cam.modeFlags;
 	preset.durationMs = cam.durationMs;
 	preset.transitionMs = cam.transitionMs;
+	preset.hardCut = cam.hardCut;
 	preset.easeLocation = cam.easeLocation;
 	preset.easeRotation = cam.easeRotation;
 	preset.shakeIndex = cam.shakeIndex;
@@ -220,6 +222,7 @@ void CCameraManager::SaveToFile()
 		WriteIniFloat(file, s, "OrbitPitch", c.orbitPitch);
 		WriteIniInt(file, s, "DurationMs", c.durationMs);
 		WriteIniInt(file, s, "TransitionMs", c.transitionMs);
+		WriteIniInt(file, s, "HardCut", c.hardCut ? 1 : 0);
 		WriteIniInt(file, s, "EaseLocation", c.easeLocation);
 		WriteIniInt(file, s, "EaseRotation", c.easeRotation);
 		WriteIniInt(file, s, "ShakeIndex", c.shakeIndex);
@@ -245,6 +248,7 @@ void CCameraManager::SaveToFile()
 		WriteIniInt(file, s, "ModeFlags", (int)p.modeFlags);
 		WriteIniInt(file, s, "DurationMs", p.durationMs);
 		WriteIniInt(file, s, "TransitionMs", p.transitionMs);
+		WriteIniInt(file, s, "HardCut", p.hardCut ? 1 : 0);
 		WriteIniInt(file, s, "EaseLocation", p.easeLocation);
 		WriteIniInt(file, s, "EaseRotation", p.easeRotation);
 		WriteIniInt(file, s, "ShakeIndex", p.shakeIndex);
@@ -291,6 +295,8 @@ void CCameraManager::LoadFromFile()
 		c.orbitPitch = ReadIniFloat(file, s, "OrbitPitch", -10.0f);
 		c.durationMs = ReadIniInt(file, s, "DurationMs", 5000);
 		c.transitionMs = ReadIniInt(file, s, "TransitionMs", 1500);
+		// Back-compat: older projects encoded a hard cut as TransitionMs = 0.
+		c.hardCut = ReadIniInt(file, s, "HardCut", c.transitionMs == 0 ? 1 : 0) != 0;
 		c.easeLocation = ReadIniInt(file, s, "EaseLocation", EASE_IN_AND_OUT);
 		c.easeRotation = ReadIniInt(file, s, "EaseRotation", EASE_IN_AND_OUT);
 		c.shakeIndex = ReadIniInt(file, s, "ShakeIndex", 0);
@@ -320,6 +326,7 @@ void CCameraManager::LoadFromFile()
 		p.modeFlags = (unsigned)ReadIniInt(file, s, "ModeFlags", 0);
 		p.durationMs = ReadIniInt(file, s, "DurationMs", 5000);
 		p.transitionMs = ReadIniInt(file, s, "TransitionMs", 1500);
+		p.hardCut = ReadIniInt(file, s, "HardCut", p.transitionMs == 0 ? 1 : 0) != 0;
 		p.easeLocation = ReadIniInt(file, s, "EaseLocation", EASE_IN_AND_OUT);
 		p.easeRotation = ReadIniInt(file, s, "EaseRotation", EASE_IN_AND_OUT);
 		p.shakeIndex = ReadIniInt(file, s, "ShakeIndex", 0);

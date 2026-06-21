@@ -162,10 +162,13 @@ void CCameraDirector::ActivateCamera(int index, bool withTransition)
 	Ped target = ResolveTarget(*cam);
 	m_activationTargetHeading = ENTITY::GET_ENTITY_HEADING(target);
 
+	// Effective blend time: a Hard Cut shot snaps in with no interpolation.
+	int trans = cam->EffectiveTransitionMs();
+
 	// Smooth path: drive the active engine cam manually along a Catmull-Rom
 	// curve through the neighbouring shot-list cameras (flowing dolly/crane),
 	// instead of the engine's straight two-point interp.
-	if (g_Config.SmoothCameraPath && m_rendering && withTransition && cam->transitionMs > 0 && m_activeIndex >= 0) {
+	if (g_Config.SmoothCameraPath && m_rendering && withTransition && trans > 0 && m_activeIndex >= 0) {
 		int fromIndex = m_activeIndex;
 		EditorCamera* fromCam = g_CameraManager.Get(fromIndex);
 		EditorCamera* prevCam = g_CameraManager.Get(PrevEnabledIndex(fromIndex));
@@ -190,17 +193,17 @@ void CCameraDirector::ActivateCamera(int index, bool withTransition)
 		CAM::SET_CAM_ACTIVE(driveCam, true);
 
 		m_interpStartTime = GetTickCount();
-		m_interpDurationMs = cam->transitionMs;
+		m_interpDurationMs = trans;
 		m_splineActive = true;
 		m_activeIndex = index;
 		m_camStartTime = GetTickCount();
 		return;
 	}
 
-	if (m_rendering && withTransition && cam->transitionMs > 0 && newSlot != m_activeSlot) {
-		CAM::SET_CAM_ACTIVE_WITH_INTERP(newCam, oldCam, cam->transitionMs, cam->easeLocation, cam->easeRotation);
+	if (m_rendering && withTransition && trans > 0 && newSlot != m_activeSlot) {
+		CAM::SET_CAM_ACTIVE_WITH_INTERP(newCam, oldCam, trans, cam->easeLocation, cam->easeRotation);
 		m_interpStartTime = GetTickCount();
-		m_interpDurationMs = cam->transitionMs;
+		m_interpDurationMs = trans;
 	}
 	else {
 		CAM::SET_CAM_ACTIVE(newCam, true);
@@ -211,7 +214,7 @@ void CCameraDirector::ActivateCamera(int index, bool withTransition)
 	}
 
 	if (!m_rendering) {
-		CAM::RENDER_SCRIPT_CAMS(true, withTransition && cam->transitionMs > 0, cam->transitionMs, true, false, 0);
+		CAM::RENDER_SCRIPT_CAMS(true, withTransition && trans > 0, trans, true, false, 0);
 		m_rendering = true;
 	}
 

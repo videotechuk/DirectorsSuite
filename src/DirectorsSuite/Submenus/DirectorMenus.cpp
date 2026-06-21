@@ -2,6 +2,8 @@
 // their own translation unit; see EditorMenus.cpp for the rest of the UI).
 
 #include "EditorMenus.h"
+#include "..\Editor\SceneLights.h"
+#include "..\Editor\SceneSteppers.h"
 
 // ---------------------------------------------------------------------------
 // Local helpers (duplicated from EditorMenus.cpp - file-static there)
@@ -40,14 +42,12 @@ static SceneNPC* SelNPC()
 static bool sNpcInvincible = false;
 static bool sNpcFrozen = false;
 static bool sRigEnabled = false;
-static bool sPointEnabled = false;
 static bool sPreviewScene = false;
 static bool sOverrideDensity = false;
 static bool sKeepAreaClear = false;
 
 // Hero light page target: player or the selected NPC
 static bool s_lightForPlayer = false;
-static int  s_lightPoint = 0; // 0 key, 1 fill, 2 back
 
 static HeroLightSetup* CurLight()
 {
@@ -56,36 +56,10 @@ static HeroLightSetup* CurLight()
 	return npc ? &npc->light : nullptr;
 }
 
-static HeroLightPoint* CurPoint()
-{
-	HeroLightSetup* light = CurLight();
-	if (!light) return nullptr;
-	switch (s_lightPoint) {
-		case 1: return &light->fill;
-		case 2: return &light->back;
-		default: return &light->key;
-	}
-}
-
 // Add-NPC category being browsed
 static int s_pedCategory = 0;
 static const std::vector<const char*> PedCategoryNames = {
 	"Story Mode Characters", "Ambient World NPCs", "Lawmen, Gangs & Workers", "Animals", "Custom (from INI)",
-};
-
-// Colour presets for the light point page
-struct ColorPreset { const char* label; int r, g, b; };
-static const std::vector<ColorPreset> LightColorPresets = {
-	{ "Warm White",    255, 244, 224 },
-	{ "White",         255, 255, 255 },
-	{ "Cool White",    205, 220, 255 },
-	{ "Candle Orange", 255, 180, 110 },
-	{ "Sunset Red",    255, 110,  90 },
-	{ "Moonlight Blue",120, 160, 255 },
-	{ "Green",         120, 255, 140 },
-	{ "Magenta",       255, 100, 230 },
-	{ "Cyan",          100, 235, 255 },
-	{ "Gold",          255, 215, 130 },
 };
 
 // ---------------------------------------------------------------------------
@@ -106,6 +80,15 @@ void CEditorMenus::BuildDirectorMenus()
 			g_Menu->GoToSubmenu(Submenu_Director_Player);
 		});
 
+		sub->AddRegularOption("Scene Lighting", "Place glowing light props anywhere in the scene and aim the sun (works day or night)", [] {
+			// Resolve the timecycle sun vars on first open (user action, well after
+			// load) - the same timing Photo Mode uses, and TimecycleRT::Init() only
+			// scans once so it must not run during early startup registration.
+			SceneLights::InitSun(g_DirectorMode.SceneLighting);
+			CEditorMenus::RebuildDirectorSceneLight();
+			g_Menu->GoToSubmenu(Submenu_Director_SceneLight);
+		});
+
 		// World / scene / gameplay control now lives under Director Mode.
 		sub->AddSubmenuOption("Time, Weather & Clouds", "Freeze the game, time scale, time of day, weather and clouds", Submenu_World);
 		sub->AddSubmenuOption("Pedestrians & Clear Area", "Ambient ped density and Clear Area tools", Submenu_Director_World);
@@ -123,9 +106,10 @@ void CEditorMenus::BuildDirectorMenus()
 			g_DirectorMode.CancelHostileCountdown();
 		});
 
-		sub->AddRegularOption("~COLOR_RED~Clear Scene~s~", "Delete every placed NPC and their lights", [] {
+		sub->AddRegularOption("~COLOR_RED~Clear Scene~s~", "Delete every placed NPC, remove all scene lights and reset the sun", [] {
 			g_DirectorMode.CancelHostileCountdown();
 			g_DirectorMode.DeleteAllNPCs();
+			g_DirectorMode.ClearSceneLighting();
 			UIUtil::PrintSubtitle("Scene cleared");
 		});
 	});
@@ -259,7 +243,7 @@ void CEditorMenus::RebuildDirectorNPCEdit()
 			g_Menu->GoToSubmenu(Submenu_Director_NPCEdit_Behaviour);
 		});
 
-		sub->AddRegularOption("Hero Lighting", "Cinematic character lighting (Rockstar rig + three-point lights)", [] {
+		sub->AddRegularOption("Hero Lighting", "The authentic Rockstar light rig pinned to this character (real shadows)", [] {
 			CEditorMenus::RebuildDirectorHeroLight(false);
 			g_Menu->GoToSubmenu(Submenu_Director_HeroLight);
 		});
@@ -444,7 +428,7 @@ void CEditorMenus::RebuildDirectorPlayer()
 			}
 		})->SetVectorIndex(g_DirectorMode.PlayerScenarioIndex);
 
-		sub->AddRegularOption("Hero Lighting", "Cinematic lighting on your character", [] {
+		sub->AddRegularOption("Hero Lighting", "The authentic Rockstar light rig pinned to your character (real shadows)", [] {
 			CEditorMenus::RebuildDirectorHeroLight(true);
 			g_Menu->GoToSubmenu(Submenu_Director_HeroLight);
 		});
@@ -474,97 +458,180 @@ void CEditorMenus::RebuildDirectorHeroLight(bool forPlayer)
 			if (HeroLightSetup* l = CurLight()) l->rigIndex = g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex();
 		})->SetVectorIndex(light->rigIndex);
 
-		sub->AddEmptyOption("--- Three-Point Custom Rig ---");
+		sub->AddEmptyOption("Place free-standing scene lights from Scene & World > Scene Lighting.");
 
-		const char* pointNames[3] = { "Key Light", "Fill Light", "Back Light" };
-		const char* pointFooters[3] = {
-			"Main light - bright, warm, usually 30-60 degrees off the face",
-			"Soft light filling the shadows from the other side",
-			"Rim light from behind separating the character from the background",
-		};
-		for (int i = 0; i < 3; i++) {
-			sub->AddRegularOption(pointNames[i], pointFooters[i], [i] {
-				CEditorMenus::RebuildDirectorHeroLightPoint(i);
-				g_Menu->GoToSubmenu(Submenu_Director_HeroLight_Point);
-			});
-		}
-
-		sub->AddRegularOption("Disable All Lights", "", [] {
+		sub->AddRegularOption("Disable Rig", "", [] {
 			if (HeroLightSetup* l = CurLight()) {
 				HeroLight::Shutdown(*l);
-				l->key.enabled = l->fill.enabled = l->back.enabled = false;
 				sRigEnabled = false;
-				UIUtil::PrintSubtitle("Hero lighting disabled");
+				UIUtil::PrintSubtitle("Hero light rig disabled");
 			}
 		});
 	});
 }
 
-void CEditorMenus::RebuildDirectorHeroLightPoint(int pointIndex)
+// Scene-global lighting: free-placed glowing light props plus the sun. Ported
+// from Photo Mode's "Improved Artificial Lighting" system (SceneLights), shared
+// so the editor lights a scene exactly the way Photo Mode does.
+void CEditorMenus::RebuildDirectorSceneLight()
 {
-	s_lightPoint = pointIndex;
-	HeroLightPoint* point = CurPoint();
-	if (!point) return;
-
-	sPointEnabled = point->enabled;
-
-	const char* pointNames[3] = { "Key Light", "Fill Light", "Back Light" };
-
-	g_Menu->AddSubmenu("DIRECTOR MODE", pointNames[pointIndex], Submenu_Director_HeroLight_Point, 12, [](Submenu* sub)
+	// Note: the timecycle sun vars are resolved by SceneLights::InitSun() from the
+	// "Scene Lighting" navigation option (a user action, well after load), not
+	// here - this rebuilder also runs once at startup to register the submenu ID.
+	g_Menu->AddSubmenu("DIRECTOR MODE", "Scene Lighting", Submenu_Director_SceneLight, 10, [](Submenu* sub)
 	{
-		HeroLightPoint* point = CurPoint();
-		if (!point) return;
+		SceneLights::State& s = g_DirectorMode.SceneLighting;
 
-		sub->AddBoolOption("Enabled", "", &sPointEnabled, [] {
-			if (HeroLightPoint* p = CurPoint()) p->enabled = sPointEnabled;
-		});
+		// === Scene lights (the glowing light-prop system) ===
+		sub->AddEmptyOption("- SCENE LIGHTS -");
 
-		auto intensity = DFloatRange(0.25f, 20.0f, 0.25f, 2);
-		sub->AddVectorOption("Intensity", "Light brightness", intensity, [] {
-			if (HeroLightPoint* p = CurPoint()) p->intensity = DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.25f, 0.25f);
-		})->SetVectorIndex(DFloatIndex(point->intensity, 0.25f, 0.25f, (int)intensity.size()));
+		std::vector<std::string> models;
+		for (int i = 0; i < SceneLights::ModelCount(); i++) models.push_back(SceneLights::ModelLabel(i));
+		sub->AddVectorOption("Light Colour", "Colour spawned by 'Spawn Light' (always-on; works day or night)", models, [] {
+			g_DirectorMode.SceneLighting.modelIdx = g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex();
+		})->SetVectorIndex(s.modelIdx);
 
-		auto range = DFloatRange(1.0f, 30.0f, 0.5f, 1);
-		sub->AddVectorOption("Range / Falloff", "How far the light reaches before falling off", range, [] {
-			if (HeroLightPoint* p = CurPoint()) p->range = DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 1.0f, 0.5f);
-		})->SetVectorIndex(DFloatIndex(point->range, 1.0f, 0.5f, (int)range.size()));
-
-		std::vector<std::string> angles;
-		for (int a = -180; a <= 180; a += 15) angles.push_back(std::to_string(a));
-		sub->AddVectorOption("Orbit Angle", "Direction around the character, relative to where they face. 0 = in front", angles, [] {
-			if (HeroLightPoint* p = CurPoint()) p->orbitDeg = (float)(-180 + g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex() * 15);
-		})->SetVectorIndex((int)((point->orbitDeg + 180.0f) / 15.0f + 0.5f));
-
-		auto distance = DFloatRange(0.5f, 10.0f, 0.25f, 2);
-		sub->AddVectorOption("Distance", "Orbit radius from the character", distance, [] {
-			if (HeroLightPoint* p = CurPoint()) p->distance = DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.5f, 0.25f);
-		})->SetVectorIndex(DFloatIndex(point->distance, 0.5f, 0.25f, (int)distance.size()));
-
-		auto height = DFloatRange(0.0f, 4.0f, 0.1f, 1);
-		sub->AddVectorOption("Height", "Height above the character's feet", height, [] {
-			if (HeroLightPoint* p = CurPoint()) p->height = DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.0f, 0.1f);
-		})->SetVectorIndex(DFloatIndex(point->height, 0.0f, 0.1f, (int)height.size()));
-
-		std::vector<std::string> presets;
-		for (const auto& p : LightColorPresets) presets.push_back(p.label);
-		sub->AddVectorOption("Colour Preset", "Quick colour selection; fine-tune with the RGB sliders below", presets, [] {
-			if (HeroLightPoint* p = CurPoint()) {
-				const ColorPreset& preset = LightColorPresets[g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex()];
-				p->r = preset.r; p->g = preset.g; p->b = preset.b;
+		sub->AddRegularOption("Spawn Light", "Place a glowing light in front of the camera (8 max)", [] {
+			int slot = SceneLights::Spawn(g_DirectorMode.SceneLighting);
+			if (slot >= 0) {
+				CEditorMenus::RebuildDirectorSceneLightEdit();
+				UIUtil::PrintSubtitle("Light placed - edit it under 'Selected Light Settings'");
 			}
 		});
 
-		auto channel = DFloatRange(0.0f, 255.0f, 15.0f, 0);
-		sub->AddVectorOption("Red", "", channel, [] {
-			if (HeroLightPoint* p = CurPoint()) p->r = (int)DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.0f, 15.0f);
-		})->SetVectorIndex(DFloatIndex((float)point->r, 0.0f, 15.0f, (int)channel.size()));
+		{
+			RegularOption* del = sub->AddRegularOption("Remove All Lights", "Delete every placed light", [] {
+				SceneLights::RemoveAll(g_DirectorMode.SceneLighting);
+				CEditorMenus::RebuildDirectorSceneLightEdit();
+			});
+			del->TextR = 204; del->TextG = 40; del->TextB = 40;
+		}
 
-		sub->AddVectorOption("Green", "", channel, [] {
-			if (HeroLightPoint* p = CurPoint()) p->g = (int)DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.0f, 15.0f);
-		})->SetVectorIndex(DFloatIndex((float)point->g, 0.0f, 15.0f, (int)channel.size()));
+		std::vector<std::string> slots;
+		for (int i = 0; i < SceneLights::MAX; i++) slots.push_back("Light " + std::to_string(i + 1));
+		sub->AddVectorOption("Selected Light", "Which placed light the editor targets", slots, [] {
+			g_DirectorMode.SceneLighting.sel = g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex();
+			CEditorMenus::RebuildDirectorSceneLightEdit();
+		})->SetVectorIndex(s.sel);
 
-		sub->AddVectorOption("Blue", "", channel, [] {
-			if (HeroLightPoint* p = CurPoint()) p->b = (int)DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.0f, 15.0f);
-		})->SetVectorIndex(DFloatIndex((float)point->b, 0.0f, 15.0f, (int)channel.size()));
+		sub->AddRegularOption("Selected Light Settings", "Move, rotate and set the intensity of the selected light", [] {
+			CEditorMenus::RebuildDirectorSceneLightEdit();
+			g_Menu->GoToSubmenu(Submenu_Director_SceneLight_Edit);
+		});
+
+		// === Sun (the scene's key light) - only when the timecycle engine
+		// resolved the sun vars. 1-degree steps; reverted by Clear Scene. ===
+		if (SceneLights::SunAvailable(s)) {
+			sub->AddEmptyOption("- SUN -");
+
+			std::vector<std::string> az;
+			for (int a = 0; a <= 360; a++) az.push_back(std::to_string(a));
+			sub->AddVectorOption("Sun Direction", "Turn the sun around you - which way it shines from. Starts at the current time-of-day position. Sun editing by disquse", az, [] {
+				SceneLights::State& st = g_DirectorMode.SceneLighting;
+				st.sunAz = (float)g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex();
+				st.sunUserEdited = true;
+				SceneLights::ApplySun(st);
+			})->SetVectorIndex((int)(s.sunAz + 0.5f));
+
+			std::vector<std::string> el;
+			for (int e = -90; e <= 90; e++) el.push_back(std::to_string(e));
+			sub->AddVectorOption("Sun Height", "Raise or lower the sun. Below 0 drops it under the horizon. Sun editing by disquse", el, [] {
+				SceneLights::State& st = g_DirectorMode.SceneLighting;
+				st.sunEl = (float)(-90 + g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex());
+				st.sunUserEdited = true;
+				SceneLights::ApplySun(st);
+			})->SetVectorIndex((int)(s.sunEl + 90.5f));
+
+			sub->AddRegularOption("Reset Sun To Time Of Day", "Put the sun back where the clock places it", [] {
+				SceneLights::RestoreSun();
+				g_DirectorMode.SceneLighting.sunUserEdited = false;
+				SceneLights::SeedSunFromClock(g_DirectorMode.SceneLighting);
+				UIUtil::PrintSubtitle("Sun reset to the current time of day");
+			});
+		}
+	});
+}
+
+void CEditorMenus::RebuildDirectorSceneLightEdit()
+{
+	SceneLights::State& s = g_DirectorMode.SceneLighting;
+
+	g_Menu->AddSubmenu("DIRECTOR MODE", "Light " + std::to_string(s.sel + 1), Submenu_Director_SceneLight_Edit, 12, [](Submenu* sub)
+	{
+		SceneLights::State& s = g_DirectorMode.SceneLighting;
+		SceneLights::Light* sel = SceneLights::Selected(s);
+		if (!sel) {
+			sub->AddEmptyOption("This slot is empty.");
+			sub->AddRegularOption("Spawn A Light Here", "Place the chosen colour in front of the camera and edit it", [] {
+				if (SceneLights::Spawn(g_DirectorMode.SceneLighting) >= 0) {
+					// Rebuild this page off the active callback, then re-enter it so
+					// it shows the new light's controls (rebuilding the active page in
+					// place would tear down the running callback).
+					CEditorMenus::RebuildDirectorSceneLight();
+					g_Menu->GoToSubmenu(Submenu_Director_SceneLight);
+				}
+			});
+			return;
+		}
+
+		sub->AddRegularOption("Move To Camera", "Reposition this light to the camera", [] {
+			SceneLights::MoveSelectedToCamera(g_DirectorMode.SceneLighting);
+		});
+
+		auto intens = DFloatRange(0.0f, 40.0f, 0.5f, 1);
+		sub->AddVectorOption("Intensity", "Brightness of this light (0 = off)", intens, [] {
+			if (SceneLights::Light* a = SceneLights::Selected(g_DirectorMode.SceneLighting)) {
+				a->intensity = DFloatFromIndex(g_Menu->GetSelectedOption()->As<VectorOption*>()->GetVectorIndex(), 0.0f, 0.5f);
+			}
+		})->SetVectorIndex(DFloatIndex(sel->intensity, 0.0f, 0.5f, (int)intens.size()));
+
+		sub->AddEmptyOption("- POSITION -");
+
+		SceneStep::AddStepSelectors(sub);
+
+		SceneStep::AddStepper(sub, "Position X", "World X (left/right adjusts by Move Step)", sel->pos.x, 3, [](int d) -> float {
+			SceneLights::State& st = g_DirectorMode.SceneLighting;
+			SceneLights::Light* a = SceneLights::Selected(st); if (!a) return 0.0f;
+			a->pos.x += SceneStep::MoveStep() * d; SceneLights::ApplyTransform(st, st.sel); return a->pos.x;
+		});
+		SceneStep::AddStepper(sub, "Position Y", "World Y", sel->pos.y, 3, [](int d) -> float {
+			SceneLights::State& st = g_DirectorMode.SceneLighting;
+			SceneLights::Light* a = SceneLights::Selected(st); if (!a) return 0.0f;
+			a->pos.y += SceneStep::MoveStep() * d; SceneLights::ApplyTransform(st, st.sel); return a->pos.y;
+		});
+		SceneStep::AddStepper(sub, "Position Z", "World Z (height)", sel->pos.z, 3, [](int d) -> float {
+			SceneLights::State& st = g_DirectorMode.SceneLighting;
+			SceneLights::Light* a = SceneLights::Selected(st); if (!a) return 0.0f;
+			a->pos.z += SceneStep::MoveStep() * d; SceneLights::ApplyTransform(st, st.sel); return a->pos.z;
+		});
+
+		SceneStep::AddStepper(sub, "Rotation X (Pitch)", "Tilt up/down", sel->rot.x, 1, [](int d) -> float {
+			SceneLights::State& st = g_DirectorMode.SceneLighting;
+			SceneLights::Light* a = SceneLights::Selected(st); if (!a) return 0.0f;
+			a->rot.x += SceneStep::RotStep() * d; SceneLights::ApplyTransform(st, st.sel); return a->rot.x;
+		});
+		SceneStep::AddStepper(sub, "Rotation Y (Roll)", "Bank left/right", sel->rot.y, 1, [](int d) -> float {
+			SceneLights::State& st = g_DirectorMode.SceneLighting;
+			SceneLights::Light* a = SceneLights::Selected(st); if (!a) return 0.0f;
+			a->rot.y += SceneStep::RotStep() * d; SceneLights::ApplyTransform(st, st.sel); return a->rot.y;
+		});
+		SceneStep::AddStepper(sub, "Rotation Z (Yaw)", "Rotate around vertical", sel->rot.z, 1, [](int d) -> float {
+			SceneLights::State& st = g_DirectorMode.SceneLighting;
+			SceneLights::Light* a = SceneLights::Selected(st); if (!a) return 0.0f;
+			a->rot.z += SceneStep::RotStep() * d; SceneLights::ApplyTransform(st, st.sel); return a->rot.z;
+		});
+
+		{
+			RegularOption* del = sub->AddRegularOption("Delete This Light", "Remove this light", [] {
+				SceneLights::State& st = g_DirectorMode.SceneLighting;
+				SceneLights::Destroy(st, st.sel);
+				// Return to the (rebuilt) Scene Lighting page rather than rebuild this
+				// page from inside its own callback.
+				CEditorMenus::RebuildDirectorSceneLight();
+				g_Menu->GoToSubmenu(Submenu_Director_SceneLight);
+				UIUtil::PrintSubtitle("Light deleted");
+			});
+			del->TextR = 204; del->TextG = 40; del->TextB = 40;
+		}
 	});
 }

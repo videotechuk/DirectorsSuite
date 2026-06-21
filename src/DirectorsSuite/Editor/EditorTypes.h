@@ -94,9 +94,14 @@ struct EditorCamera
 
 	// Timing
 	int durationMs = 5000;        // how long this camera holds during auto-switching
-	int transitionMs = 1500;      // interpolation time when switching TO this camera (0 = cut)
+	int transitionMs = 1500;      // interpolation time when switching TO this camera
+	bool hardCut = false;         // true = snap to this camera with no blend (transition ignored)
 	int easeLocation = EASE_IN_AND_OUT; // smoothness
 	int easeRotation = EASE_IN_AND_OUT;
+
+	// Effective blend time when switching TO this camera: 0 (a hard cut) when the
+	// Hard Cut flag is set, otherwise the configured transition time.
+	int EffectiveTransitionMs() const { return hardCut ? 0 : transitionMs; }
 
 	// Effects
 	int   shakeIndex = 0;         // index into CamShakeNames, 0 = none
@@ -125,6 +130,7 @@ struct CameraPreset
 	unsigned modeFlags = CAMMODE_STATIC;
 	int durationMs = 5000;
 	int transitionMs = 1500;
+	bool hardCut = false;
 	int easeLocation = EASE_IN_AND_OUT;
 	int easeRotation = EASE_IN_AND_OUT;
 	int shakeIndex = 0;
